@@ -79,6 +79,11 @@ GENERIC_COUNSELOR_MARKERS: tuple[str, ...] = (
 # نسخه‌ی فارسی ترجمه‌شده‌ی MentalChat16K (JSONL یا CSV).
 # Persian translation of MentalChat16K (JSONL or CSV).
 PERSIAN_DATASET_PATH: Path = DATA_DIR / "mentalchat16k_fa.jsonl"
+# داده‌ی موک هرگز به‌صورت ضمنی به‌عنوان دیتاست واقعی بارگذاری نمی‌شود؛
+# تنها با پرچم صریح --allow-mock مجاز است (Issue #25).
+# Mock datasets are never loaded implicitly as real data; loading requires
+# the explicit --allow-mock opt-in (Issue #25).
+ALLOW_MOCK_DATASET: bool = False
 
 # --- مدل‌های امبدینگ / Embedding models ---
 # کلید کوتاه → شناسه‌ی Hugging Face + شیوه‌ی prefix (برای e5 ضروری است).

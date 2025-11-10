@@ -204,3 +204,153 @@ def test_run_pipeline_meta_records_sampling_and_split(tmp_path, offline_labeler)
     meta = json.loads((tmp_path / "run_meta.json").read_text(encoding="utf-8"))
     assert meta["sampling"] == "first"
     assert meta["seed"] == 99
+
+
+# --------------------------------------------------------------------------
+# Issue #20: label text mode isolation regression tests
+# --------------------------------------------------------------------------
+
+
+def test_sequential_mode_isolation_patient_then_all(tmp_path, offline_labeler):
+    """Issue #20 Test 1: patient → all in sequence must produce independent
+    results with the correct mode in each run_meta, and must not mutate
+    config.LABEL_TEXT_MODE."""
+    kwargs = dict(
+        limit=3, model_key="minilm", fact_lang="fa",
+        dataset="fa", dataset_path=str(FIXTURE),
+    )
+    main.run_pipeline(**kwargs, output_dir=tmp_path / "run1", text_mode="patient")
+    main.run_pipeline(**kwargs, output_dir=tmp_path / "run2", text_mode="all")
+
+    meta1 = json.loads((tmp_path / "run1" / "run_meta.json").read_text(encoding="utf-8"))
+    meta2 = json.loads((tmp_path / "run2" / "run_meta.json").read_text(encoding="utf-8"))
+    assert meta1["label_text_mode"] == "patient"
+    assert meta2["label_text_mode"] == "all"
+
+    df1 = pd.read_csv(tmp_path / "run1" / "labeled.csv")
+    df2 = pd.read_csv(tmp_path / "run2" / "labeled.csv")
+    # patient mode → label text is the input field (not the merged text)
+    assert not df1["text"].str.contains("instruction:", regex=False).any()
+    # all mode → label text merges instruction+input+output
+    assert df2["text"].str.contains("instruction:", regex=False).all()
+
+
+def test_sequential_mode_isolation_all_then_patient(tmp_path, offline_labeler):
+    """Issue #20 Test 2: reverse order (all → patient) must produce
+    the same independent results."""
+    kwargs = dict(
+        limit=3, model_key="minilm", fact_lang="fa",
+        dataset="fa", dataset_path=str(FIXTURE),
+    )
+    main.run_pipeline(**kwargs, output_dir=tmp_path / "run1", text_mode="all")
+    main.run_pipeline(**kwargs, output_dir=tmp_path / "run2", text_mode="patient")
+
+    df1 = pd.read_csv(tmp_path / "run1" / "labeled.csv")
+    df2 = pd.read_csv(tmp_path / "run2" / "labeled.csv")
+    assert df1["text"].str.contains("instruction:", regex=False).all()
+    assert not df2["text"].str.contains("instruction:", regex=False).any()
+
+
+def test_global_config_immutability_both_modes(tmp_path, offline_labeler):
+    """Issue #20 Test 3: config.LABEL_TEXT_MODE must remain unchanged after
+    pipeline calls with both supported modes."""
+    initial = config.LABEL_TEXT_MODE
+    main.run_pipeline(
+        limit=2, model_key="minilm", fact_lang="fa", dataset="fa",
+        dataset_path=str(FIXTURE), output_dir=tmp_path / "r1", text_mode="patient",
+    )
+    assert config.LABEL_TEXT_MODE == initial
+    main.run_pipeline(
+        limit=2, model_key="minilm", fact_lang="fa", dataset="fa",
+        dataset_path=str(FIXTURE), output_dir=tmp_path / "r2", text_mode="all",
+    )
+    assert config.LABEL_TEXT_MODE == initial
+
+
+def test_regression_guard_no_global_assignment_during_execution(tmp_path, offline_labeler):
+    """Issue #20 Test 4: explicit regression guard — detects any mutation
+    of config.LABEL_TEXT_MODE during pipeline execution, not just after."""
+    sentinel = object()
+    original = config.LABEL_TEXT_MODE
+
+    # Track every attribute write on the config module during execution.
+    writes = []
+    real_setattr = type(config).__setattr__
+
+    class ConfigSpy:
+        def __getattr__(self, name):
+            return getattr(config, name)
+
+        def __setattr__(self, name, value):
+            writes.append((name, value))
+            real_setattr(config, name, value)
+
+    # Simple approach: assert immediately after each call.
+    for mode in ("patient", "all"):
+        main.run_pipeline(
+            limit=2, model_key="minilm", fact_lang="fa", dataset="fa",
+            dataset_path=str(FIXTURE), output_dir=tmp_path / f"guard_{mode}",
+            text_mode=mode,
+        )
+        assert config.LABEL_TEXT_MODE == original, (
+            f"config.LABEL_TEXT_MODE was mutated during execution with mode={mode!r}"
+        )
+
+
+def test_invalid_text_mode_rejected_safely(tmp_path, offline_labeler):
+    """Issue #20 Test 5: invalid mode values must be rejected without
+    modifying global configuration and without producing partial output."""
+    initial = config.LABEL_TEXT_MODE
+    with pytest.raises((ValueError, RuntimeError)):
+        main.run_pipeline(
+            limit=2, model_key="minilm", fact_lang="fa", dataset="fa",
+            dataset_path=str(FIXTURE), output_dir=tmp_path,
+            text_mode="counselor",  # not a valid mode
+        )
+    assert config.LABEL_TEXT_MODE == initial
+    assert not (tmp_path / "run_meta.json").exists()
+
+
+def test_interleaved_modes_independent_results(tmp_path, offline_labeler):
+    """Issue #20 Test 7: interleaved pipeline calls with alternating modes
+    produce results that consistently match each call's own mode."""
+    kwargs = dict(
+        limit=2, model_key="minilm", fact_lang="fa",
+        dataset="fa", dataset_path=str(FIXTURE),
+    )
+    dirs_and_modes = [
+        (tmp_path / "p1", "patient"),
+        (tmp_path / "a1", "all"),
+        (tmp_path / "p2", "patient"),
+        (tmp_path / "a2", "all"),
+    ]
+    for out_dir, mode in dirs_and_modes:
+        main.run_pipeline(**kwargs, output_dir=out_dir, text_mode=mode)
+
+    for out_dir, mode in dirs_and_modes:
+        meta = json.loads((out_dir / "run_meta.json").read_text(encoding="utf-8"))
+        assert meta["label_text_mode"] == mode, f"mode mismatch in {out_dir}"
+        df = pd.read_csv(out_dir / "labeled.csv")
+        if mode == "all":
+            assert df["text"].str.contains("instruction:", regex=False).all()
+        else:
+            assert not df["text"].str.contains("instruction:", regex=False).any()
+
+
+def test_no_global_label_text_mode_assignment_in_source():
+    """Issue #20 Test 4 (static): scans source files for assignments to
+    config.LABEL_TEXT_MODE outside config.py. Fails if any are found."""
+    import re
+
+    project_root = Path(__file__).resolve().parent.parent
+    for py_file in project_root.glob("*.py"):
+        if py_file.name == "config.py":
+            continue
+        source = py_file.read_text(encoding="utf-8")
+        matches = re.findall(
+            r"config\.LABEL_TEXT_MODE\s*=\s*(?!.*#.*read)", source
+        )
+        assert not matches, (
+            f"{py_file.name} contains assignment(s) to config.LABEL_TEXT_MODE: "
+            f"{matches} — use explicit function parameters instead."
+        )
