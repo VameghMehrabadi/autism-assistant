@@ -180,14 +180,55 @@ def plot_distribution(report: dict, out_path: Path) -> None:
     print(f"[gap_analysis] Chart saved -> {out_path}")
 
 
-def run(df: pd.DataFrame, scores: np.ndarray) -> dict:
+def run(
+    df: pd.DataFrame,
+    scores: np.ndarray,
+    output_dir: Path | None = None,
+    run_meta: dict | None = None,
+) -> dict:
+    """اجرای gap analysis و ذخیره‌ی گزارش‌ها.
+
+    Args:
+        output_dir: اگر داده شود، خروجی‌ها آنجا نوشته می‌شوند
+                    (برای مقایسه‌ی چندمدلی). در غیر این صورت config پیش‌فرض.
+        run_meta: متادیتای اختیاری (model, fact_lang, ...) که به JSON اضافه می‌شود.
+    """
     report = build_report(df, scores)
+    if run_meta:
+        report["run"] = run_meta
+
+    if output_dir is None:
+        md_path = config.GAP_REPORT_MD
+        json_path = config.GAP_REPORT_JSON
+        chart_path = config.GAP_CHART_PATH
+    else:
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        md_path = output_dir / "gap_analysis.md"
+        json_path = output_dir / "gap_analysis.json"
+        chart_path = output_dir / "gap_distribution.png"
+
+    title_extra = ""
+    if run_meta:
+        title_extra = (
+            f"\n\n- run_id: **{run_meta.get('id', '')}**\n"
+            f"- model: **{run_meta.get('model_name', run_meta.get('model_key', ''))}**\n"
+            f"- fact_lang: **{run_meta.get('fact_lang', '')}**\n"
+            f"- dataset: **{run_meta.get('dataset', '')}**\n"
+        )
     md = render_markdown(report)
-    config.GAP_REPORT_MD.write_text(md, encoding="utf-8")
-    config.GAP_REPORT_JSON.write_text(
+    if title_extra:
+        # insert metadata after the first heading block
+        parts = md.split("\n", 2)
+        if len(parts) >= 3:
+            md = parts[0] + "\n" + title_extra + parts[2]
+        else:
+            md = md + title_extra
+
+    md_path.write_text(md, encoding="utf-8")
+    json_path.write_text(
         json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    plot_distribution(report, config.GAP_CHART_PATH)
-    print(f"[gap_analysis] Reports saved -> {config.GAP_REPORT_MD}, "
-          f"{config.GAP_REPORT_JSON}")
+    plot_distribution(report, chart_path)
+    print(f"[gap_analysis] Reports saved -> {md_path}, {json_path}")
     return report
