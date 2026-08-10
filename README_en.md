@@ -1,18 +1,39 @@
 # Autism Assistant — Semantic Labeling & Gap Analysis on MentalChat16K
 
+[![Python tests](https://github.com/EbiAraz/autism-assistant/actions/workflows/python-tests.yml/badge.svg)](https://github.com/EbiAraz/autism-assistant/actions/workflows/python-tests.yml)
+
 A project to develop an LLM (using RAG or fine-tuning) for **autistic patients with language delay**.
-This repository implements the data preparation stage: loading the **MentalChat16K** dataset (mental health group),
-semantically labeling samples (via semantic similarity) based on 7 autism fact categories (A through G), and performing a **gap analysis**
-to identify strong and weak categories before training the final model.
+This repository implements the data preparation stage: loading **MentalChat16K** (English or Persian translation),
+semantically labeling samples against 7 autism fact categories (A–G), running **gap analysis**, and comparing
+embedding models for reliability.
 
 ## Pipeline
 
-1. `data_loader.py` — Downloads `ShenLab/MentalChat16K` from Hugging Face and merges fields into a single utterance.
-2. `facts.py` — 7 categories (A–G), each with several reference facts serving as semantic **prototypes**.
-3. `labeler.py` — Multilingual embeddings (`paraphrase-multilingual-MiniLM-L12-v2`), computes cosine similarity
-   between each sample and the prototypes, and assigns a top-1 label (with optional multi-label using a threshold).
-4. `gap_analysis.py` — Category distribution, mean/variance of scores, identification of strong/weak categories, and a chart.
-5. `main.py` — Orchestrates all stages with a single command.
+1. `data_loader.py` — Load English `ShenLab/MentalChat16K` or a local Persian JSONL/CSV.
+2. `facts.py` — Categories A–G with bilingual prototypes; filter with `en` / `fa` / `both`.
+3. `labeler.py` — Multilingual embeddings + cosine similarity labeling.
+4. `gap_analysis.py` — Distribution, score stats, weak/strong categories, chart.
+5. `main.py` — Single-run orchestration.
+6. `compare_runs.py` — Five-way model/language comparison.
+7. `export_for_translation.py` + `prompts/semantic_persian_translation.txt` — Export EN records and translate to FA (GPT-4+).
+
+## Supported embedding models
+
+| Key | Hugging Face ID | Notes |
+|-----|-----------------|-------|
+| `minilm` | `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` | Original task-1 model |
+| `bge-m3` | `BAAI/bge-m3` | Stronger multilingual dense model |
+| `e5-large` | `intfloat/multilingual-e5-large` | Uses `query:` / `passage:` prefixes |
+
+## Five-way comparison matrix
+
+| # | Facts | Dataset | Model |
+|---|--------|---------|--------|
+| 1 | English | Persian | MiniLM *(rerun; facts may change)* |
+| 2 | English | Persian | bge-m3 |
+| 3 | English | Persian | multilingual-e5-large |
+| 4 | Persian | Persian | bge-m3 |
+| 5 | Persian | Persian | multilingual-e5-large |
 
 ## Install
 
@@ -22,21 +43,67 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-## Run
+## Translate dataset to Persian
 
 ```bash
-# Full run on the first 500 samples (default config.py for quick CPU testing)
-python main.py
+# 1) Export English utterances for translation
+python export_for_translation.py --limit 500
 
-# Run on the entire dataset
-python main.py --limit 0
-
-# Limited run for smoke testing
-python main.py --limit 100
+# 2) Translate each record with GPT-4+ using:
+#    prompts/semantic_persian_translation.txt
+#    Keep idx; write Persian text into data/mentalchat16k_fa.jsonl
 ```
 
-Outputs are written to the `outputs/` folder: `labeled.csv`, `gap_analysis.md`,
-`gap_analysis.json`, `gap_distribution.png`.
+Schema for `data/mentalchat16k_fa.jsonl` (one JSON object per line):
+
+```json
+{"idx": 0, "text": "…Persian utterance…"}
+```
+
+A tiny smoke-test fixture lives at `tests/fixtures/mentalchat16k_fa.sample.jsonl`.
+
+## Run (single configuration)
+
+```bash
+# Original-style run (English dataset, both EN+FA facts, MiniLM)
+python main.py --dataset en --fact-lang both --model minilm
+
+# English facts × Persian dataset × bge-m3
+python main.py --dataset fa --fact-lang en --model bge-m3 --out outputs/en_fa_bge-m3
+
+# Persian facts × Persian dataset × e5-large
+python main.py --dataset fa --fact-lang fa --model e5-large --out outputs/fa_fa_e5-large
+
+# Limit / full dataset
+python main.py --limit 100
+python main.py --limit 0
+```
+
+## Run (all 5 comparisons)
+
+```bash
+# Requires data/mentalchat16k_fa.jsonl
+python compare_runs.py --limit 500
+
+# Smoke test with the sample fixture
+python compare_runs.py --limit 5 --dataset-path tests/fixtures/mentalchat16k_fa.sample.jsonl --only 1
+
+# Skip runs that already have outputs
+python compare_runs.py --skip-existing
+```
+
+Outputs:
+
+- Single run → `outputs/` (or `--out` dir): `labeled.csv`, `scores.npy`, `gap_analysis.*`, `run_meta.json`
+- Comparison → `outputs/comparison/`: per-run folders + `comparison_report.md`, `comparison_summary.csv`, `comparison_shares.png`
+
+## Tests / CI
+
+```bash
+python -m pytest
+```
+
+GitHub Actions runs pytest on `push` / `pull_request` to `main`.
 
 ## Categories (A–G)
 
@@ -50,10 +117,11 @@ Outputs are written to the `outputs/` folder: `labeled.csv`, `gap_analysis.md`,
 | F | Diagnosis & Support | 6 |
 | G | Autism Knowledge & Awareness | 14 |
 
-(Full facts are defined in `facts.py`.)
+(Full facts are defined in `facts.py`. Expert-updated facts can replace this file when ready.)
 
 ## Notes
 
-- The embedding model is **multilingual** so that Persian/English facts and the English dataset texts are compared in a shared semantic space — matching by meaning, not by word.
-- **Multi-prototype** strategy: the score for each category = maximum similarity across that category's prototypes.
-- The gap analysis output identifies which autism categories have weak coverage and need supplementary data (medical/ASD datasets) added in the after-tuning/RAG phase.
+- Semantic matching is by embedding cosine similarity, not lexical overlap.
+- Multi-prototype score per category = max similarity over that category’s selected-language prototypes.
+- `multilingual-e5-large` prefixes samples as `query:` and facts as `passage:`.
+- Gap analysis shows which autism categories are under-covered before RAG / fine-tuning.
