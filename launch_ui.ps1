@@ -8,4 +8,5 @@ if (Test-Path ".\.venv\Scripts\Activate.ps1") {
 
 Write-Host "Starting Autism Assistant UI..."
 Write-Host "Open the local URL shown by Streamlit (usually http://localhost:8501)"
-streamlit run ui.py
+Write-Host "Use: streamlit run ui.py   (not: python ui.py)"
+python -m streamlit run ui.py
