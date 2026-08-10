@@ -184,15 +184,28 @@ FACTS: list[Fact] = [
 ]
 
 
-def get_prototypes() -> list[dict]:
+def get_prototypes(lang: str = "both") -> list[dict]:
     """برگرداندن prototypeها به‌صورت لیست دیکشنری برای امبدینگ.
 
-    هر فکت دو prototype می‌سازد: نسخه‌ی انگلیسی و نسخه‌ی فارسی.
+    Args:
+        lang: "en" | "fa" | "both"
+            - both: هر فکت دو prototype (EN و FA) می‌سازد (رفتار task اول).
+            - en / fa: فقط همان زبان برای مقایسه‌ی کنترل‌شده‌ی چندمدلی.
     """
+    lang = (lang or "both").lower().strip()
+    if lang not in {"en", "fa", "both"}:
+        raise ValueError(f"Unsupported fact lang '{lang}'. Use en|fa|both.")
+
     protos: list[dict] = []
     for f in FACTS:
-        protos.append({"fact_id": f.id, "category": f.category, "lang": "en", "text": f.en})
-        protos.append({"fact_id": f.id, "category": f.category, "lang": "fa", "text": f.fa})
+        if lang in ("en", "both"):
+            protos.append(
+                {"fact_id": f.id, "category": f.category, "lang": "en", "text": f.en}
+            )
+        if lang in ("fa", "both"):
+            protos.append(
+                {"fact_id": f.id, "category": f.category, "lang": "fa", "text": f.fa}
+            )
     return protos
 
 

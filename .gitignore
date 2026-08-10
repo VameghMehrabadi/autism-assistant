@@ -32,11 +32,15 @@ venv.bak/
 datasets/
 
 # --- Generated data & outputs (حاصل اجرای pipeline — در گیت نگه نمی‌داریم) ---
-data/
+data/*
+!data/.gitkeep
 outputs/
 *.npy
 *.csv
 !requirements.txt
+# keep tiny fixtures used by unit tests
+!tests/fixtures/
+!tests/fixtures/**
 
 # Reports & charts that are regenerated
 outputs/*.md
