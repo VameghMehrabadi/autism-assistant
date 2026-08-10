@@ -52,7 +52,33 @@ python export_for_translation.py --limit 500
 # و خروجی را در data/mentalchat16k_fa.jsonl ذخیره کنید
 ```
 
-## Run / اجرا
+## UI / رابط کاربری (پیشنهادی)
+
+پروژه **modular** است؛ برای اجرای آسان از UI مرورگر استفاده کنید:
+
+```bash
+# Windows
+.\launch_ui.ps1
+# یا
+launch_ui.bat
+# یا
+streamlit run ui.py
+```
+
+صفحات UI:
+
+| صفحه | کار |
+|------|-----|
+| Home (`ui.py`) | نمای کلی ماژول‌ها و وضعیت دیتاست |
+| Quick Label | لیبل‌گذاری تعاملی یک متن |
+| Run Pipeline | اجرای کامل تک‌پیکربندی |
+| Compare Models | ماتریس ۵تایی مدل‌ها |
+| Results | مشاهده خروجی‌ها و گزارش‌ها |
+| Translate / Export | خروجی برای ترجمه‌ی فارسی + پرامپت |
+
+کد UI در `ui.py` + `pages/` و کمک‌کننده‌های مشترک در `ui_lib/` است.
+
+## Run / اجرا (CLI)
 
 ```bash
 # تک‌اجرا (مثال)
@@ -63,11 +89,6 @@ python compare_runs.py --limit 500
 
 # smoke test با fixture کوچک
 python compare_runs.py --limit 5 --dataset-path tests/fixtures/mentalchat16k_fa.sample.jsonl --only 1
-```
-
-```bash
-# راه‌اندازی رابط کاربری مرورگر
-streamlit run ui.py
 ```
 
 خروجی تک‌اجرا در `outputs/` (یا `--out`) و خروجی مقایسه در `outputs/comparison/` نوشته می‌شود.

@@ -1,145 +1,92 @@
-"""Streamlit UI for Autism Assistant.
+"""Autism Assistant — Streamlit entrypoint.
 
-Launch:
+Launch (from project root):
     streamlit run ui.py
+    # or
+    .\\launch_ui.ps1
 """
 from __future__ import annotations
 
-import pandas as pd
+from pathlib import Path
+
 import streamlit as st
-from data_loader import load_samples
-from labeler import SemanticLabeler
-from facts import CATEGORIES, category_titles_bilingual
+
 import config
+from ui_lib.widgets import render_category_legend
 
+st.set_page_config(
+    page_title="Autism Assistant",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
-@st.cache_resource
-def get_labeler() -> SemanticLabeler:
-    return SemanticLabeler()
+st.title("Autism Assistant")
+st.caption(
+    "Semantic labeling & gap analysis for MentalChat16K × autism facts (A–G). "
+    "Modular pipeline with a browser UI to run, compare, and inspect results."
+)
 
+st.markdown(
+    """
+### Launch checklist
+1. Activate the venv and install deps (`pip install -r requirements.txt`).
+2. Open this UI with `streamlit run ui.py` or `launch_ui.ps1`.
+3. Use the **pages in the sidebar** to run each stage.
+"""
+)
 
-@st.cache_data
-def get_samples(limit: int = 50) -> list:
-    return load_samples(limit=limit)
+c1, c2, c3 = st.columns(3)
+with c1:
+    st.subheader("1 · Quick Label")
+    st.write("Paste text or pick a sample and score categories interactively.")
+with c2:
+    st.subheader("2 · Run Pipeline")
+    st.write("Full labeling + gap analysis for one model / fact-language setup.")
+with c3:
+    st.subheader("3 · Compare Models")
+    st.write("Run the five-way MiniLM / bge-m3 / e5-large comparison matrix.")
 
-
-def build_score_table(score_vector: dict[str, float]) -> pd.DataFrame:
-    df = pd.DataFrame(
-        sorted(score_vector.items(), key=lambda item: item[1], reverse=True),
-        columns=["Category", "Score"],
+st.markdown("---")
+left, right = st.columns([3, 2])
+with left:
+    st.subheader("Project modules")
+    st.markdown(
+        """
+| Module | Role |
+|--------|------|
+| `data_loader.py` | EN / FA dataset loading |
+| `facts.py` | Autism prototypes A–G |
+| `labeler.py` | Embeddings + cosine labeling |
+| `gap_analysis.py` | Reports & charts |
+| `main.py` | Single-run orchestrator |
+| `compare_runs.py` | 5-way comparison |
+| `export_for_translation.py` | EN → FA export helper |
+| `ui.py` + `pages/` | Browser launcher UI |
+| `ui_lib/` | Shared UI helpers |
+"""
     )
-    df["Score"] = df["Score"].round(4)
-    return df
-
-
-def render_label_result(result: dict) -> None:
-    st.subheader("Labeling result")
-    top_label = result["top_label"]
-    top_score = result["top_score"]
-    confident = result["confident"]
-
-    left, right = st.columns([2, 3])
-    with left:
-        st.metric("Top category", f"{top_label}", delta=f"score={top_score:.4f}")
-        st.markdown("**Assigned categories:**")
-        st.write(", ".join(result["labels"]))
-        st.markdown("**Confidence:**")
-        st.write("✅ Confident" if confident else "⚠️ Not confident")
-
-    with right:
-        score_df = build_score_table(result["score_vector"])
-        st.bar_chart(score_df.set_index("Category"))
-
-    st.markdown("### Category scores")
-    st.dataframe(score_df, use_container_width=True)
-
-
-def render_category_legend() -> None:
-    titles = category_titles_bilingual()
-    legend = pd.DataFrame(
-        [(key, value) for key, value in titles.items()],
-        columns=["Category", "Title (EN / FA)"],
-    )
-    st.table(legend)
-
-
-def main() -> None:
-    st.set_page_config(
-        page_title="Autism Assistant UI",
-        layout="wide",
-        initial_sidebar_state="expanded",
-    )
-    st.title("Autism Assistant — Semantic Labeling UI")
+with right:
+    st.subheader("Current defaults")
+    st.write("**Default model:**", config.EMBED_MODEL_KEY)
+    st.write("**HF id:**", config.EMBED_MODEL_NAME)
+    st.write("**Threshold:**", config.LABEL_THRESHOLD)
+    st.write("**Outputs:**", str(config.OUTPUT_DIR))
+    fa = config.PERSIAN_DATASET_PATH
     st.write(
-        "Interactive browser UI for semantic labeling with Autism Assistant. "
-        "Use the sample loader or paste your own text to evaluate category similarity."
+        "**Persian dataset:**",
+        "✅ ready" if fa.exists() else "⏳ missing — use Translate / Export page",
     )
 
-    labeler = get_labeler()
+st.markdown("---")
+st.subheader("Categories A–G")
+render_category_legend()
 
-    with st.sidebar:
-        st.header("Input options")
-        sample_limit = st.slider(
-            "Load dataset examples",
-            min_value=10,
-            max_value=200,
-            value=50,
-            step=10,
-        )
-        use_dataset = st.checkbox("Enable sample selection", value=True)
-        st.markdown("---")
-        st.header("Project info")
-        st.write("Embedding model:", config.EMBED_MODEL_NAME)
-        st.write("Category count:", len(labeler.cat_keys))
-        st.write("Confidence threshold:", config.LABEL_THRESHOLD)
-        st.markdown("---")
-        st.header("Category legend")
-        st.write("Browse the category titles used for scoring.")
-        render_category_legend()
+st.info(
+    "Tip: keep heavy model downloads on GPU if available. "
+    "For a smoke test, choose the tiny Persian sample fixture and limit=5."
+)
 
-    sample_text = ""
-    sample_meta = None
-    samples = []
-    if use_dataset:
-        with st.spinner("Loading sample dataset..."):
-            samples = get_samples(limit=sample_limit)
-
-        if samples:
-            sample_options = [
-                f"#{sample.idx}: {sample.text[:90].replace('\n', ' ')}..."
-                for sample in samples
-            ]
-            selected = st.selectbox("Choose a dataset sample", options=sample_options)
-            selected_index = sample_options.index(selected)
-            sample_text = samples[selected_index].text
-            sample_meta = samples[selected_index].meta
-        else:
-            st.warning("No samples were loaded. Try increasing the dataset limit.")
-
-    text = st.text_area("Text to label", value=sample_text, height=260)
-    analyze_button = st.button("Analyze text")
-
-    if analyze_button:
-        if not text.strip():
-            st.warning("Please type some text or select a sample before analyzing.")
-        else:
-            with st.spinner("Embedding and scoring text..."):
-                results = labeler.assign_labels(
-                    labeler.score_samples(labeler.embed_samples([text]))
-                )
-            render_label_result(results[0])
-
-            if sample_meta is not None:
-                with st.expander("Sample metadata"):
-                    st.json(sample_meta)
-
-    st.markdown("---")
-    st.subheader("Tips")
-    st.write(
-        "Use the sidebar to load dataset examples and compare how the model "
-        "assigns categories. Paste your own text for quick semantic labeling."
-    )
-
-
-if __name__ == "__main__":
-    main()
+# Ensure pages/ is discoverable next to this file
+_pages = Path(__file__).resolve().parent / "pages"
+if not _pages.exists():
+    st.error("Missing `pages/` folder — multipage navigation will not work.")

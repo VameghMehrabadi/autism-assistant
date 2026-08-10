@@ -70,7 +70,8 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def _selected_runs(only: str | None) -> list[dict]:
+def selected_runs(only: str | None) -> list[dict]:
+    """Parse `--only 1,2,3` into comparison run configs."""
     runs = list(config.COMPARISON_RUNS)
     if not only:
         return runs
@@ -84,7 +85,11 @@ def _selected_runs(only: str | None) -> list[dict]:
     return selected
 
 
-def _summarize_run(report: dict, run_cfg: dict) -> dict:
+# Back-compat alias
+_selected_runs = selected_runs
+
+
+def summarize_run(report: dict, run_cfg: dict) -> dict:
     pc = report["per_category"]
     return {
         "id": run_cfg["id"],
@@ -105,6 +110,10 @@ def _summarize_run(report: dict, run_cfg: dict) -> dict:
         "mean_scores": {c: pc[c]["mean_score"] for c in CATEGORY_KEYS},
         "global_mean_score_per_category": report["global_mean_score_per_category"],
     }
+
+
+# Back-compat alias
+_summarize_run = summarize_run
 
 
 def build_comparison_table(summaries: list[dict]) -> pd.DataFrame:
@@ -214,7 +223,7 @@ def plot_comparison(summaries: list[dict], out_path: Path) -> None:
 def main() -> int:
     args = parse_args()
     limit = args.limit if args.limit is not None else config.SAMPLE_LIMIT
-    runs = _selected_runs(args.only)
+    runs = selected_runs(args.only)
 
     fa_path = Path(args.dataset_path) if args.dataset_path else config.PERSIAN_DATASET_PATH
     if not fa_path.exists():
@@ -253,7 +262,7 @@ def main() -> int:
                     "title": run_cfg["title"],
                 },
             )
-        summaries.append(_summarize_run(report, run_cfg))
+        summaries.append(summarize_run(report, run_cfg))
 
     table = build_comparison_table(summaries)
     csv_path = config.COMPARISON_DIR / "comparison_summary.csv"
