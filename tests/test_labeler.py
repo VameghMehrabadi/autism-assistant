@@ -1,6 +1,6 @@
 import numpy as np
 from facts import CATEGORY_KEYS
-from labeler import SemanticLabeler
+from labeler import SemanticLabeler, apply_e5_prefix, resolve_model
 
 
 def test_assign_labels_multi_label():
@@ -23,3 +23,22 @@ def test_assign_labels_none_when_not_confident():
 
     result = SemanticLabeler.assign_labels(dummy, scores, threshold=0.5, multi_label=False)
     assert result[0]["labels"] == ["NONE"]
+
+
+def test_resolve_model_keys():
+    key, name, prefix = resolve_model(model_key="e5-large")
+    assert key == "e5-large"
+    assert "e5" in name.lower()
+    assert prefix == "e5"
+
+    key, name, prefix = resolve_model(model_key="bge-m3")
+    assert key == "bge-m3"
+    assert "bge-m3" in name.lower()
+    assert prefix == "none"
+
+
+def test_apply_e5_prefix():
+    texts = apply_e5_prefix(["hello"], role="query")
+    assert texts == ["query: hello"]
+    texts = apply_e5_prefix(["passage: already"], role="passage")
+    assert texts == ["passage: already"]
