@@ -62,7 +62,31 @@ Schema for `data/mentalchat16k_fa.jsonl` (one JSON object per line):
 
 A tiny smoke-test fixture lives at `tests/fixtures/mentalchat16k_fa.sample.jsonl`.
 
-## Run (single configuration)
+## UI (recommended launcher)
+
+The project stays modular; use the browser UI to run stages without memorizing CLI flags:
+
+```bash
+# Windows
+.\launch_ui.ps1
+# or
+launch_ui.bat
+# or
+streamlit run ui.py
+```
+
+| Page | Purpose |
+|------|---------|
+| Home (`ui.py`) | Module overview + dataset status |
+| Quick Label | Interactive single-text labeling |
+| Run Pipeline | Full single-config labeling + gap analysis |
+| Compare Models | Five-way model comparison matrix |
+| Results | Browse outputs / reports / charts |
+| Translate / Export | Export EN records + translation prompt |
+
+UI code: `ui.py`, `pages/`, shared helpers in `ui_lib/`.
+
+## Run (single configuration, CLI)
 
 ```bash
 # Original-style run (English dataset, both EN+FA facts, MiniLM)
@@ -79,7 +103,7 @@ python main.py --limit 100
 python main.py --limit 0
 ```
 
-## Run (all 5 comparisons)
+## Run (all 5 comparisons, CLI)
 
 ```bash
 # Requires data/mentalchat16k_fa.jsonl
