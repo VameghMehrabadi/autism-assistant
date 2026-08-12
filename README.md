@@ -28,13 +28,17 @@
 
 ## ماتریس مقایسه (۵ اجرا)
 
+## ماتریس مقایسه (۵ اجرا) — همه با فکت فارسی
+
 | # | فکت | دیتاست | مدل |
 |---|-----|--------|-----|
-| 1 | انگلیسی | فارسی | MiniLM *(اجرای مجدد)* |
-| 2 | انگلیسی | فارسی | bge-m3 |
-| 3 | انگلیسی | فارسی | multilingual-e5-large |
+| 1 | فارسی | انگلیسی | MiniLM *(اجرای مجدد)* |
+| 2 | فارسی | انگلیسی | bge-m3 |
+| 3 | فارسی | انگلیسی | multilingual-e5-large |
 | 4 | فارسی | فارسی | bge-m3 |
 | 5 | فارسی | فارسی | multilingual-e5-large |
+
+> اجرا‌های ۱-۳ روی دیتاست انگلیسی MentalChat16K و اجرا‌های ۴-۵ روی نسخه‌ی ترجمه‌شده‌ی فارسی (با GPT-4+) انجام می‌شوند.
 
 ## Install / نصب
 
@@ -81,14 +85,16 @@ streamlit run ui.py
 ## Run / اجرا (CLI)
 
 ```bash
-# تک‌اجرا (مثال)
-python main.py --dataset fa --fact-lang en --model bge-m3 --out outputs/en_fa_bge-m3
+# فکت فارسی × دیتاست انگلیسی × MiniLM  (اجرای ۱ ماتریس)
+python main.py --dataset en --fact-lang fa --model minilm --out outputs/fa_en_minilm
 
-# هر ۵ مقایسه (نیاز به data/mentalchat16k_fa.jsonl)
+# هر ۵ مقایسه:
+# اجرا‌های ۱-۳: دیتاست انگلیسی (نیازی به فایل FA نیست)
+# اجرا‌های ۴-۵: نیاز به data/mentalchat16k_fa.jsonl
 python compare_runs.py --limit 500
 
-# smoke test با fixture کوچک
-python compare_runs.py --limit 5 --dataset-path tests/fixtures/mentalchat16k_fa.sample.jsonl --only 1
+# smoke test با fixture کوچک (فقط برای run‌های دیتاست فارسی)
+python compare_runs.py --limit 5 --dataset-path tests/fixtures/mentalchat16k_fa.sample.jsonl --only 4
 ```
 
 خروجی تک‌اجرا در `outputs/` (یا `--out`) و خروجی مقایسه در `outputs/comparison/` نوشته می‌شود.

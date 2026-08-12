@@ -65,32 +65,33 @@ LABEL_THRESHOLD: float = 0.35
 MULTI_LABEL: bool = True
 
 # --- مقایسه‌ی ۵ پیکربندی / Five-way comparison matrix ---
-# 1) EN facts × FA dataset × MiniLM  (rerun of task 1 on Persian data)
-# 2) EN facts × FA dataset × bge-m3
-# 3) EN facts × FA dataset × e5-large
-# 4) FA facts × FA dataset × bge-m3
+# همه‌ی اجراها از فکت‌های فارسی استفاده می‌کنند (FA facts).
+# 1) FA facts × EN dataset × MiniLM   (rerun of task 1; facts may have changed)
+# 2) FA facts × EN dataset × bge-m3
+# 3) FA facts × EN dataset × e5-large
+# 4) FA facts × FA dataset × bge-m3   (after GPT-4+ translation)
 # 5) FA facts × FA dataset × e5-large
 COMPARISON_RUNS: list[dict[str, str]] = [
     {
-        "id": "1_en_fa_minilm",
-        "fact_lang": "en",
-        "dataset": "fa",
+        "id": "1_fa_en_minilm",
+        "fact_lang": "fa",
+        "dataset": "en",
         "model_key": "minilm",
-        "title": "English facts × Persian dataset × MiniLM",
+        "title": "Persian facts × English dataset × MiniLM",
     },
     {
-        "id": "2_en_fa_bge-m3",
-        "fact_lang": "en",
-        "dataset": "fa",
+        "id": "2_fa_en_bge-m3",
+        "fact_lang": "fa",
+        "dataset": "en",
         "model_key": "bge-m3",
-        "title": "English facts × Persian dataset × bge-m3",
+        "title": "Persian facts × English dataset × bge-m3",
     },
     {
-        "id": "3_en_fa_e5-large",
-        "fact_lang": "en",
-        "dataset": "fa",
+        "id": "3_fa_en_e5-large",
+        "fact_lang": "fa",
+        "dataset": "en",
         "model_key": "e5-large",
-        "title": "English facts × Persian dataset × multilingual-e5-large",
+        "title": "Persian facts × English dataset × multilingual-e5-large",
     },
     {
         "id": "4_fa_fa_bge-m3",

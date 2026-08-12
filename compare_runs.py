@@ -1,15 +1,15 @@
 """اجرای ماتریس ۵ پیکربندی و ساخت گزارش مقایسه‌ای.
 
-پیکربندی‌ها (config.COMPARISON_RUNS):
-1. EN facts × FA dataset × MiniLM
-2. EN facts × FA dataset × bge-m3
-3. EN facts × FA dataset × e5-large
-4. FA facts × FA dataset × bge-m3
-5. FA facts × FA dataset × e5-large
+پیکربندی‌ها (config.COMPARISON_RUNS) — همه از فکت فارسی استفاده می‌کنند:
+1. FA facts × EN dataset × MiniLM   (rerun of task 1; facts may have changed)
+2. FA facts × EN dataset × bge-m3
+3. FA facts × EN dataset × multilingual-e5-large
+4. FA facts × FA dataset × bge-m3   (after GPT-4+ translation)
+5. FA facts × FA dataset × multilingual-e5-large
 
 اجرا:
     python compare_runs.py --limit 100
-    python compare_runs.py --limit 0          # کل دیتاست فارسی
+    python compare_runs.py --limit 0          # کل دیتاست
     python compare_runs.py --only 1,2         # فقط بعضی runها
 """
 from __future__ import annotations
@@ -182,10 +182,9 @@ def render_comparison_markdown(summaries: list[dict], table: pd.DataFrame) -> st
         "",
         "## Notes for interpretation",
         "",
-        "- Run 1 repeats the original MiniLM setup on the **Persian** dataset "
-        "(facts may have changed; always rerun).",
-        "- Runs 2–3 keep English facts and swap in stronger multilingual encoders.",
-        "- Runs 4–5 use Persian facts with the same Persian dataset "
+        "- Runs 1–3 use **Persian facts × English dataset** to compare three encoders "
+        "on the original MentalChat16K (task 1 rerun + two stronger multilingual models).",
+        "- Runs 4–5 use **Persian facts × Persian dataset** after GPT-4+ translation "
         "(matched-language condition).",
         "- Prefer models whose category ranking is stable and whose confident_rate "
         "is not dominated by a single category unless that matches domain priors.",
@@ -226,12 +225,14 @@ def main() -> int:
     runs = selected_runs(args.only)
 
     fa_path = Path(args.dataset_path) if args.dataset_path else config.PERSIAN_DATASET_PATH
-    if not fa_path.exists():
+    needs_fa = any(r["dataset"] == "fa" for r in runs)
+    if needs_fa and not fa_path.exists():
         print(
             f"[compare] ERROR: Persian dataset missing: {fa_path}\n"
             "1) python export_for_translation.py --limit 500\n"
             "2) Translate with prompts/semantic_persian_translation.txt (GPT-4+)\n"
-            "3) Save as data/mentalchat16k_fa.jsonl",
+            "3) Save as data/mentalchat16k_fa.jsonl\n"
+            "Note: runs 1-3 use the English dataset and do not need this file.",
             file=sys.stderr,
         )
         return 2
@@ -250,12 +251,14 @@ def main() -> int:
             print(f"[compare] Skipping existing run -> {report_path}")
             report = json.loads(report_path.read_text(encoding="utf-8"))
         else:
+            ds = run_cfg["dataset"]
+            ds_path = fa_path if ds == "fa" else None
             report = run_pipeline(
                 limit=limit,
                 model_key=run_cfg["model_key"],
                 fact_lang=run_cfg["fact_lang"],
-                dataset="fa",
-                dataset_path=fa_path,
+                dataset=ds,
+                dataset_path=ds_path,
                 output_dir=run_dir,
                 run_meta={
                     "id": run_cfg["id"],

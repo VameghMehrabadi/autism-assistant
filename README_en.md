@@ -25,15 +25,17 @@ embedding models for reliability.
 | `bge-m3` | `BAAI/bge-m3` | Stronger multilingual dense model |
 | `e5-large` | `intfloat/multilingual-e5-large` | Uses `query:` / `passage:` prefixes |
 
-## Five-way comparison matrix
+## Five-way comparison matrix — all runs use Persian facts
 
 | # | Facts | Dataset | Model |
-|---|--------|---------|--------|
-| 1 | English | Persian | MiniLM *(rerun; facts may change)* |
-| 2 | English | Persian | bge-m3 |
-| 3 | English | Persian | multilingual-e5-large |
+|---|-------|---------|--------|
+| 1 | Persian | English | MiniLM *(rerun; facts may change)* |
+| 2 | Persian | English | bge-m3 |
+| 3 | Persian | English | multilingual-e5-large |
 | 4 | Persian | Persian | bge-m3 |
 | 5 | Persian | Persian | multilingual-e5-large |
+
+> Runs 1–3 use the original English MentalChat16K; runs 4–5 use the GPT-4+ Persian translation.
 
 ## Install
 
@@ -89,13 +91,13 @@ UI code: `ui.py`, `pages/`, shared helpers in `ui_lib/`.
 ## Run (single configuration, CLI)
 
 ```bash
-# Original-style run (English dataset, both EN+FA facts, MiniLM)
-python main.py --dataset en --fact-lang both --model minilm
+# Persian facts × English dataset × MiniLM  (run 1 of the matrix)
+python main.py --dataset en --fact-lang fa --model minilm --out outputs/fa_en_minilm
 
-# English facts × Persian dataset × bge-m3
-python main.py --dataset fa --fact-lang en --model bge-m3 --out outputs/en_fa_bge-m3
+# Persian facts × English dataset × bge-m3   (run 2)
+python main.py --dataset en --fact-lang fa --model bge-m3 --out outputs/fa_en_bge-m3
 
-# Persian facts × Persian dataset × e5-large
+# Persian facts × Persian dataset × e5-large (run 5)
 python main.py --dataset fa --fact-lang fa --model e5-large --out outputs/fa_fa_e5-large
 
 # Limit / full dataset
@@ -106,11 +108,12 @@ python main.py --limit 0
 ## Run (all 5 comparisons, CLI)
 
 ```bash
-# Requires data/mentalchat16k_fa.jsonl
+# Runs 1-3 use the English dataset (no FA file needed).
+# Runs 4-5 require data/mentalchat16k_fa.jsonl.
 python compare_runs.py --limit 500
 
-# Smoke test with the sample fixture
-python compare_runs.py --limit 5 --dataset-path tests/fixtures/mentalchat16k_fa.sample.jsonl --only 1
+# Smoke test with the sample fixture (only FA-dataset runs use it)
+python compare_runs.py --limit 5 --dataset-path tests/fixtures/mentalchat16k_fa.sample.jsonl --only 4
 
 # Skip runs that already have outputs
 python compare_runs.py --skip-existing

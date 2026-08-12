@@ -22,7 +22,8 @@ from ui_lib.widgets import persian_dataset_ready, render_limit_input
 st.set_page_config(page_title="Compare Models", layout="wide")
 st.title("Compare Models")
 st.caption(
-    "Five runs: EN/FA facts × Persian dataset × MiniLM / bge-m3 / e5-large."
+    "Five runs — all use Persian facts × {English, English, English, Persian, Persian} "
+    "dataset × MiniLM / bge-m3 / e5-large."
 )
 
 st.dataframe(
@@ -64,12 +65,14 @@ with st.sidebar:
     )
     skip_existing = st.checkbox("Skip runs with existing outputs", value=False)
 
-if not persian_dataset_ready(fa_path):
-    st.error(
-        f"Persian dataset not found: `{fa_path}`. "
-        "Export + translate first, or choose the tiny sample fixture."
-    )
-    st.stop()
+    selected_set = {str(i) for i in only}
+    if not persian_dataset_ready(fa_path) and (selected_set & {"4", "5"}):
+        st.error(
+            f"Persian dataset not found: `{fa_path}`. "
+            "Runs 4–5 need it. Export + translate first, "
+            "or choose the tiny sample fixture, or run only 1–3."
+        )
+        st.stop()
 
 if st.button("Run selected comparisons", type="primary"):
     if not only:
@@ -92,13 +95,15 @@ if st.button("Run selected comparisons", type="primary"):
         if skip_existing and report_path.exists():
             report = json.loads(report_path.read_text(encoding="utf-8"))
         else:
+            ds = run_cfg["dataset"]
+            ds_path = fa_path if ds == "fa" else None
             try:
                 report = run_pipeline(
                     limit=int(limit),
                     model_key=run_cfg["model_key"],
                     fact_lang=run_cfg["fact_lang"],
-                    dataset="fa",
-                    dataset_path=fa_path,
+                    dataset=ds,
+                    dataset_path=ds_path,
                     output_dir=run_dir,
                     run_meta={"id": run_cfg["id"], "title": run_cfg["title"]},
                 )
