@@ -142,9 +142,9 @@ GitHub Actions runs pytest on `push` / `pull_request` to `main`.
 | D | Routine & Predictability | 3 |
 | E | Special Interests & Strengths | 7 |
 | F | Diagnosis & Support | 6 |
-| G | Autism Knowledge & Awareness | 14 |
+| G | Autism Knowledge & Awareness | 15 |
 
-(Full facts are defined in `facts.py`. Expert-updated facts can replace this file when ready.)
+(Full facts are defined in `facts.py`. This is the expert-approved final set.)
 
 ## Notes
 

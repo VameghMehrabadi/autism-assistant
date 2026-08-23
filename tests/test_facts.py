@@ -1,4 +1,32 @@
-from facts import CATEGORY_KEYS, FACTS, get_prototypes
+from collections import Counter
+
+from facts import CATEGORIES, CATEGORY_KEYS, FACTS, get_prototypes
+
+EXPECTED_PER_CATEGORY = {"A": 6, "B": 3, "C": 4, "D": 3, "E": 7, "F": 6, "G": 15}
+
+
+def test_final_fact_inventory():
+    assert len(FACTS) == 44
+    assert [f.id for f in FACTS] == list(range(1, 45))
+    counts = Counter(f.category for f in FACTS)
+    assert counts == EXPECTED_PER_CATEGORY
+    assert CATEGORY_KEYS == list(CATEGORIES.keys()) == list("ABCDEFG")
+
+
+def test_person_first_persian_wording():
+    """Expert-approved facts use person-first ASD wording, not identity-first."""
+    person_facts = [f for f in FACTS if "افراد" in f.fa or "دختران" in f.fa]
+    assert person_facts
+    for f in person_facts:
+        assert "افراد اوتیستیک" not in f.fa
+        assert "دختران اوتیستیک" not in f.fa
+
+
+def test_comorbidity_fact_in_knowledge_category():
+    comorbidity = next(f for f in FACTS if f.id == 33)
+    assert comorbidity.category == "G"
+    assert "فلج مغزی" in comorbidity.fa
+    assert "cerebral palsy" in comorbidity.en.lower()
 
 
 def test_get_prototypes_count_both():

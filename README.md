@@ -115,9 +115,9 @@ python -m pytest
 | D   | Routine & Predictability      | 3      |
 | E   | Special Interests & Strengths | 7      |
 | F   | Diagnosis & Support           | 6      |
-| G   | Autism Knowledge & Awareness  | 14     |
+| G   | Autism Knowledge & Awareness  | 15     |
 
-(فکت‌های کامل در `facts.py`؛ نسخه‌ی تأییدشده توسط متخصص را می‌توان جایگزین کرد.)
+(فکت‌های کامل در `facts.py`؛ نسخه‌ی نهایی تأییدشده.)
 
 ## Notes / یادداشت‌ها
 
