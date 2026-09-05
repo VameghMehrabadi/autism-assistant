@@ -105,6 +105,7 @@ if st.button("Run selected comparisons", type="primary"):
                     dataset=ds,
                     dataset_path=ds_path,
                     output_dir=run_dir,
+                    text_mode="patient",
                     run_meta={"id": run_cfg["id"], "title": run_cfg["title"]},
                 )
             except Exception as e:

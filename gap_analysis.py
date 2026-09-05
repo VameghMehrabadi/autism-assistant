@@ -28,6 +28,23 @@ def _category_label(cat: str) -> str:
     return f"{cat}. {CATEGORIES[cat]['title_en']}"
 
 
+def _label_lists(df: pd.DataFrame) -> list[list[str]]:
+    """لیبل‌های multi-label هر نمونه؛ اگر ستون نباشد فقط top-1."""
+    tops = df["top_label"].astype(str).tolist()
+    if "labels" not in df.columns:
+        return [[t] for t in tops]
+    out: list[list[str]] = []
+    for raw, top in zip(df["labels"], tops):
+        if isinstance(raw, (list, tuple)):
+            labs = [str(x) for x in raw if x and str(x) != "NONE"]
+        elif isinstance(raw, str) and raw.strip():
+            labs = [x for x in raw.split("|") if x and x != "NONE"]
+        else:
+            labs = [top] if top != "NONE" else []
+        out.append(labs)
+    return out
+
+
 def build_report(df: pd.DataFrame, scores: np.ndarray,
                  threshold: float = config.LABEL_THRESHOLD) -> dict:
     """ساختن دیکشنری گزارش از DataFrame لیبل‌شده."""
@@ -37,36 +54,45 @@ def build_report(df: pd.DataFrame, scores: np.ndarray,
     # امتیاز top-1 هر نمونه و دسته‌ی top
     top_scores = df["top_score"].to_numpy(dtype=float)
     top_cats = df["top_label"].to_numpy()
+    multi_lists = _label_lists(df)
+    global_means = np.mean(scores, axis=0) if n else np.zeros(len(cat_keys))
 
     per_cat: dict[str, dict] = {}
-    for c in cat_keys:
+    for ci, c in enumerate(cat_keys):
         mask = top_cats == c
         cnt = int(mask.sum())
         sc = top_scores[mask] if cnt else np.array([])
+        multi_cnt = sum(1 for labs in multi_lists if c in labs)
         per_cat[c] = {
             "title": CATEGORIES[c]["title_en"],
             "title_fa": CATEGORIES[c]["title_fa"],
             "count": cnt,
             "share": round(cnt / n, 4) if n else 0.0,
+            "multi_count": multi_cnt,
+            "multi_share": round(multi_cnt / n, 4) if n else 0.0,
             "mean_score": round(float(sc.mean()), 4) if cnt else 0.0,
             "median_score": round(float(np.median(sc)), 4) if cnt else 0.0,
             "std_score": round(float(sc.std()), 4) if cnt else 0.0,
             "confident_share": (
                 round(float((sc >= threshold).mean()), 4) if cnt else 0.0
             ),
+            "global_mean_score": round(float(global_means[ci]), 4),
         }
 
     # میانگین امتیاز هر دسته روی کل نمونه‌ها (بدون شرط top-1) — نشان‌دهنده‌ی
     # میزان هم‌خوانی کلی داده‌ها با آن دسته.
     global_cat_score = {
-        cat: round(float(mean), 4)
-        for cat, mean in zip(cat_keys, np.mean(scores, axis=0))
+        cat: per_cat[cat]["global_mean_score"] for cat in cat_keys
     }
 
-    # رتبه‌بندی ضعیف→قوی بر اساس count و mean_score ترکیبی
+    # رتبه‌بندی ضعیف→قوی: top-1، سپس پوشش multi-label، سپس شباهت سراسری
     ranking = sorted(
         cat_keys,
-        key=lambda c: (per_cat[c]["count"], per_cat[c]["mean_score"]),
+        key=lambda c: (
+            per_cat[c]["count"],
+            per_cat[c]["multi_count"],
+            per_cat[c]["global_mean_score"],
+        ),
     )
 
     n_confident = int((top_scores >= threshold).sum())
@@ -92,8 +118,9 @@ def _recommendations(report: dict) -> list[str]:
     for c in report["weakest"]:
         pc = report["per_category"][c]
         recs.append(
-            f"- **{c}. {pc['title']}**: پوشش ضعیف (count={pc['count']}, "
-            f"share={pc['share']:.1%}, mean_score={pc['mean_score']}). "
+            f"- **{c}. {pc['title']}**: پوشش ضعیف "
+            f"(top-1={pc['count']}, multi={pc.get('multi_count', 0)}, "
+            f"share={pc['share']:.1%}, global_mean={pc.get('global_mean_score', 0)}). "
             f"برای فاز after-tuning/RAG داده‌ی مکمل از دیتاست‌های پزشکی/ASD بعدی "
             f"برای این دسته اضافه شود."
         )
@@ -110,17 +137,18 @@ def render_markdown(report: dict) -> str:
         f"- نمونه‌های بااعتماد / confident: "
         f"**{report['n_confident']} ({report['confident_rate']:.1%})**",
         "",
-        "## Distribution per category (top-1)",
+        "## Distribution per category (top-1 and multi-label)",
         "",
-        "| Cat | Title (EN) | Count | Share | Mean top-score | Median | Std | Confident% |",
-        "|-----|------------|-------|-------|----------------|--------|-----|------------|",
+        "| Cat | Title (EN) | Top-1 | Share | Multi | Multi% | Mean top-score | Global mean |",
+        "|-----|------------|-------|-------|-------|--------|----------------|-------------|",
     ]
     for c in CATEGORY_KEYS:
         d = pc[c]
+        mean_top = f"{d['mean_score']}" if d["count"] else "—"
         lines.append(
             f"| {c} | {d['title']} | {d['count']} | {d['share']:.1%} | "
-            f"{d['mean_score']} | {d['median_score']} | {d['std_score']} | "
-            f"{d['confident_share']:.1%} |"
+            f"{d.get('multi_count', 0)} | {d.get('multi_share', 0):.1%} | "
+            f"{mean_top} | {d.get('global_mean_score', 0)} |"
         )
     lines += [
         "",
@@ -155,25 +183,38 @@ def render_markdown(report: dict) -> str:
 def plot_distribution(report: dict, out_path: Path) -> None:
     cats = CATEGORY_KEYS
     counts = [report["per_category"][c]["count"] for c in cats]
-    means = [report["per_category"][c]["mean_score"] for c in cats]
+    multi = [report["per_category"][c].get("multi_count", 0) for c in cats]
+    means = [report["per_category"][c].get("global_mean_score", 0.0) for c in cats]
     labels = [_category_label(c) for c in cats]
 
     fig, ax1 = plt.subplots(figsize=(11, 6))
     x = np.arange(len(cats))
-    bars = ax1.bar(x, counts, color="#4C72B0", alpha=0.85, label="Count (top-1)")
-    ax1.set_ylabel("Count of samples (top-1)", color="#4C72B0")
+    width = 0.38
+    bars = ax1.bar(
+        x - width / 2, counts, width, color="#4C72B0", alpha=0.85, label="Top-1"
+    )
+    bars_m = ax1.bar(
+        x + width / 2, multi, width, color="#55A868", alpha=0.75, label="Multi-label"
+    )
+    ax1.set_ylabel("Count of samples")
     ax1.set_xticks(x)
     ax1.set_xticklabels(labels, rotation=20, ha="right", fontsize=9)
     for b, cnt in zip(bars, counts):
         ax1.text(b.get_x() + b.get_width() / 2, b.get_height(),
-                 str(cnt), ha="center", va="bottom", fontsize=9)
+                 str(cnt), ha="center", va="bottom", fontsize=8)
+    for b, cnt in zip(bars_m, multi):
+        ax1.text(b.get_x() + b.get_width() / 2, b.get_height(),
+                 str(cnt), ha="center", va="bottom", fontsize=8)
 
     ax2 = ax1.twinx()
-    ax2.plot(x, means, "-o", color="#C44E52", label="Mean top-score")
-    ax2.set_ylabel("Mean top-1 cosine similarity", color="#C44E52")
-    ax2.set_ylim(0, max(0.6, max(means) + 0.05))
+    ax2.plot(x, means, "-o", color="#C44E52", label="Global mean similarity")
+    ax2.set_ylabel("Global mean cosine similarity", color="#C44E52")
+    ax2.set_ylim(0, max(0.6, max(means) + 0.05) if means else 0.6)
 
-    plt.title("MentalChat16K — autism category distribution & confidence")
+    handles, legends = ax1.get_legend_handles_labels()
+    h2, l2 = ax2.get_legend_handles_labels()
+    ax1.legend(handles + h2, legends + l2, loc="upper right", fontsize=8)
+    plt.title("MentalChat16K — autism category distribution & similarity")
     fig.tight_layout()
     fig.savefig(out_path, dpi=130)
     plt.close(fig)

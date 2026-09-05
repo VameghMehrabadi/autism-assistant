@@ -15,7 +15,7 @@ embedding models for reliability.
 4. `gap_analysis.py` — Distribution, score stats, weak/strong categories, chart.
 5. `main.py` — Single-run orchestration.
 6. `compare_runs.py` — Five-way model/language comparison.
-7. `export_for_translation.py` + `prompts/semantic_persian_translation.txt` — Export EN records and translate to FA (GPT-4+).
+7. `export_for_translation.py` + `translate_dataset.py` + `prompts/semantic_persian_translation.txt` — Export and GPT-4+ Persian translation.
 
 ## Supported embedding models
 
@@ -42,18 +42,32 @@ embedding models for reliability.
 ```bash
 python -m venv .venv
 .venv\Scripts\activate          # Windows
+# source .venv/bin/activate     # Linux / macOS
 pip install -r requirements.txt
+```
+
+## Docker
+
+```bash
+cp .env.example .env    # optional HF_TOKEN / OPENAI_API_KEY
+docker compose up --build
+```
+
+UI: [http://localhost:8501](http://localhost:8501). Models download on first use into the `model_cache` volume. Outputs land in `./outputs`, local datasets in `./data`.
+
+```bash
+# one-off CLI in the same image
+docker compose run --rm pipeline main.py --limit 50 --model minilm --fact-lang fa --dataset en
 ```
 
 ## Translate dataset to Persian
 
 ```bash
-# 1) Export English utterances for translation
 python export_for_translation.py --limit 500
-
-# 2) Translate each record with GPT-4+ using:
-#    prompts/semantic_persian_translation.txt
-#    Keep idx; write Persian text into data/mentalchat16k_fa.jsonl
+# optional if OPENAI_API_KEY is set:
+# python translate_dataset.py --limit 500
+# or translate manually with prompts/semantic_persian_translation.txt
+# output: data/mentalchat16k_fa.jsonl
 ```
 
 Schema for `data/mentalchat16k_fa.jsonl` (one JSON object per line):
@@ -75,6 +89,8 @@ The project stays modular; use the browser UI to run stages without memorizing C
 launch_ui.bat
 # or
 streamlit run ui.py
+# or
+docker compose up --build
 ```
 
 | Page | Purpose |
@@ -149,6 +165,7 @@ GitHub Actions runs pytest on `push` / `pull_request` to `main`.
 ## Notes
 
 - Semantic matching is by embedding cosine similarity, not lexical overlap.
+- Labeling uses patient text only by default (`LABEL_TEXT_MODE=patient`), not the counselor prompt/reply.
 - Multi-prototype score per category = max similarity over that category’s selected-language prototypes.
 - `multilingual-e5-large` prefixes samples as `query:` and facts as `passage:`.
 - Gap analysis shows which autism categories are under-covered before RAG / fine-tuning.

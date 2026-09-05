@@ -22,6 +22,23 @@ def test_person_first_persian_wording():
         assert "دختران اوتیستیک" not in f.fa
 
 
+def test_emotion_facts_do_not_overlap_routine_or_support():
+    """C must stay about emotion so D/F can win their own samples."""
+    c_facts = [f for f in FACTS if f.category == "C"]
+    banned = (
+        "routine",
+        "predictability",
+        "روتین",
+        "پیش‌بینی",
+        "early intervention",
+        "مداخلات زودهنگام",
+    )
+    for f in c_facts:
+        blob = f"{f.en} {f.fa}".lower()
+        for word in banned:
+            assert word.lower() not in blob, f"C fact {f.id} still overlaps: {word}"
+
+
 def test_comorbidity_fact_in_knowledge_category():
     comorbidity = next(f for f in FACTS if f.id == 33)
     assert comorbidity.category == "G"

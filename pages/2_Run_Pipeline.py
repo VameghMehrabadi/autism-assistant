@@ -14,6 +14,7 @@ from ui_lib.widgets import (
     render_fact_lang_selector,
     render_limit_input,
     render_model_selector,
+    render_text_mode_selector,
 )
 
 st.set_page_config(page_title="Run Pipeline", layout="wide")
@@ -25,6 +26,7 @@ with st.sidebar:
     model_key = render_model_selector(key="rp_model")
     fact_lang = render_fact_lang_selector(key="rp_fact", default="en")
     dataset, dataset_path = render_dataset_selector(key_prefix="rp")
+    text_mode = render_text_mode_selector(key="rp_text_mode")
     limit = render_limit_input(key="rp_limit", default=100)
     out_name = st.text_input(
         "Output folder name",
@@ -52,6 +54,7 @@ if run:
                 dataset=dataset if dataset == "en" else "fa",
                 dataset_path=dataset_path,
                 output_dir=out_dir,
+                text_mode=text_mode,
                 run_meta={"source": "streamlit"},
             )
         st.success(f"Done → `{out_dir}`")

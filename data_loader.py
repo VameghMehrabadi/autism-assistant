@@ -22,22 +22,112 @@ class Sample:
     meta: dict
 
 
+_TAGGED_FIELDS: tuple[str, ...] = ("instruction", "input", "output")
+
+
+def _clean(value: object) -> str:
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _is_generic_counselor_prompt(text: str) -> bool:
+    low = text.lower()
+    return any(marker in low for marker in config.GENERIC_COUNSELOR_MARKERS)
+
+
+def _parse_tagged_text(text: str) -> dict[str, str]:
+    """Parse `instruction: ...\\ninput: ...\\noutput: ...` blocks."""
+    buckets: dict[str, list[str]] = {k: [] for k in _TAGGED_FIELDS}
+    current: str | None = None
+    for line in text.splitlines():
+        stripped = line.strip()
+        matched = None
+        for key in _TAGGED_FIELDS:
+            prefix = f"{key}:"
+            if stripped.lower().startswith(prefix):
+                matched = key
+                rest = stripped[len(prefix):].strip()
+                current = key
+                if rest:
+                    buckets[key].append(rest)
+                break
+        if matched is None and current:
+            buckets[current].append(line.rstrip())
+    return {k: "\n".join(v).strip() for k, v in buckets.items() if "".join(v).strip()}
+
+
+def _field_map(row: dict) -> dict[str, str]:
+    fields: dict[str, str] = {}
+    for key in _TAGGED_FIELDS:
+        val = _clean(row.get(key))
+        if val:
+            fields[key] = val
+    raw = _clean(row.get("text"))
+    if raw:
+        parsed = _parse_tagged_text(raw)
+        for key, val in parsed.items():
+            fields.setdefault(key, val)
+        if not parsed:
+            fields.setdefault("text", raw)
+    return fields
+
+
 def _merge_fields(row: dict, fields: tuple[str, ...]) -> str:
     """ادغام فیلدهای متنی دیتاست در یک رشته‌ی تمیز."""
     parts: list[str] = []
     for f in fields:
-        val = row.get(f)
-        if isinstance(val, str) and val.strip():
-            parts.append(f"{f}: {val.strip()}")
-    return "\n".join(parts) if parts else ""
+        val = _clean(row.get(f))
+        if val:
+            parts.append(f"{f}: {val}")
+    return "\n".join(parts)
 
 
-def _row_to_text(row: dict, fields: tuple[str, ...]) -> str:
-    """اگر ستون text موجود باشد همان را بگیر؛ وگرنه فیلدها را ادغام کن."""
-    direct = row.get("text")
-    if isinstance(direct, str) and direct.strip():
-        return direct.strip()
-    return _merge_fields(row, fields)
+def extract_label_text(row: dict, mode: str | None = None) -> str:
+    """متن مورد استفاده برای لیبل‌گذاری.
+
+    patient: شرح مراجع (input). پرامپت تکراری مشاور و پاسخ درمانی حذف می‌شود
+    تا دستهٔ F به‌خاطر زبان حمایت/درمان همه‌ی نمونه‌ها را نبرد.
+    all: رفتار قبلی — instruction + input + output (یا کل فیلد text).
+    """
+    mode = (mode or config.LABEL_TEXT_MODE).lower().strip()
+    if mode not in {"patient", "all"}:
+        raise ValueError(f"Unsupported label text mode {mode!r}. Use patient|all.")
+
+    fields = _field_map(row)
+    if mode == "all":
+        merged = _merge_fields(
+            {k: fields.get(k, "") for k in _TAGGED_FIELDS},
+            _TAGGED_FIELDS,
+        )
+        return merged or fields.get("text", "")
+
+    inp = fields.get("input", "")
+    if inp:
+        return inp
+
+    inst = fields.get("instruction", "")
+    if inst and not _is_generic_counselor_prompt(inst):
+        return inst
+
+    raw = fields.get("text", "")
+    if raw and not _is_generic_counselor_prompt(raw):
+        return raw
+
+    return inp or inst or fields.get("output", "") or raw
+
+
+def _row_to_text(row: dict, fields: tuple[str, ...], mode: str | None = None) -> str:
+    """متن لیبل از ردیف؛ fields فقط برای سازگاری با حالت all استفاده می‌شود."""
+    mode = (mode or config.LABEL_TEXT_MODE).lower().strip()
+    if mode == "all":
+        mapped = _field_map(row)
+        merged = _merge_fields(
+            {k: mapped.get(k, "") for k in fields},
+            fields,
+        )
+        if merged:
+            return merged
+        return mapped.get("text", "")
+    return extract_label_text(row, mode=mode)
 
 
 def load_samples_en(limit: int | None = None) -> list[Sample]:
@@ -61,13 +151,14 @@ def load_samples_en(limit: int | None = None) -> list[Sample]:
     fields = tuple(f for f in config.DATASET_TEXT_FIELDS if f in cols)
     if not fields:
         fields = tuple(c for c in cols if ds.features[c].dtype == "string")
-    print(f"[data_loader] Using text fields: {fields}")
+    mode = config.LABEL_TEXT_MODE
+    print(f"[data_loader] Using text fields: {fields} | mode={mode}")
 
     n = len(ds) if limit is None else min(limit, len(ds))
     samples: list[Sample] = []
     for i in range(n):
         row = ds[i]
-        text = _merge_fields(row, fields)
+        text = _row_to_text(row, fields, mode=mode)
         if not text:
             continue
         samples.append(Sample(idx=i, text=text, meta={k: row[k] for k in fields}))
@@ -126,11 +217,12 @@ def load_samples_fa(
         )
 
     fields = config.DATASET_TEXT_FIELDS
+    mode = config.LABEL_TEXT_MODE
     samples: list[Sample] = []
     for i, row in enumerate(rows):
         if limit is not None and len(samples) >= limit:
             break
-        text = _row_to_text(row, fields)
+        text = _row_to_text(row, fields, mode=mode)
         if not text:
             continue
         idx = int(row["idx"]) if "idx" in row and str(row["idx"]).isdigit() else i
@@ -139,7 +231,7 @@ def load_samples_fa(
             meta["text"] = row["text"]
         samples.append(Sample(idx=idx, text=text, meta=meta))
 
-    print(f"[data_loader] Prepared {len(samples)} Persian samples.")
+    print(f"[data_loader] Prepared {len(samples)} Persian samples (mode={mode}).")
     return samples
 
 

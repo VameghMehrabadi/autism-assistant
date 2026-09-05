@@ -1,96 +1,64 @@
-# ============================================================
-# Python / Gitignore — autism_assistant_project
-# ============================================================
-
-# --- Byte-compiled / optimized / DLL files ---
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
-
-# --- Distribution / packaging ---
 build/
 dist/
 *.egg-info/
 *.egg
 wheels/
-share/python-wheels/
-MANIFEST
 
-# --- Virtual environments ---
+# Virtual environments
 .venv/
 venv/
 env/
 ENV/
-env.bak/
-venv.bak/
 
-# --- Caches (embedding model cache, datasets cache, HF cache) ---
+# Model / dataset caches
 .cache/
-.cache
 .huggingface/
 datasets/
 
-# --- Generated data & outputs (حاصل اجرای pipeline — در گیت نگه نمی‌داریم) ---
+# Generated data & pipeline outputs (keep folder placeholders)
 data/*
 !data/.gitkeep
-outputs/
+outputs/*
+!outputs/.gitkeep
 *.npy
-*.csv
 !requirements.txt
-# keep tiny fixtures used by unit tests
 !tests/fixtures/
 !tests/fixtures/**
 
-# Reports & charts that are regenerated
-outputs/*.md
-outputs/*.json
-outputs/*.png
-
-# --- Logs ---
+# Logs
 *.log
 logs/
-*.out
 
-# --- Jupyter / IPython ---
+# Jupyter
 .ipynb_checkpoints/
 *.ipynb
 
-# --- IDE / Editor ---
+# IDE / OS
 .idea/
 .vscode/
 *.swp
-*.swo
 *~
 .DS_Store
 Thumbs.db
+Desktop.ini
 
-# --- Type checkers / linters caches ---
+# Linters / testers
 .mypy_cache/
-.pyre/
-.pytype/
 .ruff_cache/
-.dmypy.json
-dmypy.json
-
-# --- Testing / coverage ---
 .pytest_cache/
+pytest-cache-files-*/
 .coverage
-.coverage.*
 htmlcov/
-.tox/
-.nox/
-coverage.xml
-*.cover
 
-# --- Environment / secrets ---
+# Secrets
 .env
 .env.*
 !.env.example
 secrets.json
 *.key
-
-# --- OS junk ---
-ehthumbs.db
-Desktop.ini
-$RECYCLE.BIN/
+.streamlit/secrets.toml

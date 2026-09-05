@@ -5,14 +5,28 @@
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 # --- مسیرها / Paths ---
 ROOT: Path = Path(__file__).resolve().parent
 DATA_DIR: Path = ROOT / "data"
 OUTPUT_DIR: Path = ROOT / "outputs"
-CACHE_DIR: Path = ROOT / ".cache"
 PROMPTS_DIR: Path = ROOT / "prompts"
+
+
+def _resolve_cache_dir() -> Path:
+    """Prefer AUTISM_CACHE_DIR, then D: when C: is too small for large models."""
+    override = os.environ.get("AUTISM_CACHE_DIR")
+    if override:
+        return Path(override)
+    d_drive = Path("D:/autism_assistant_cache")
+    if Path("D:/").exists():
+        return d_drive
+    return ROOT / ".cache"
+
+
+CACHE_DIR: Path = _resolve_cache_dir()
 
 for _p in (DATA_DIR, OUTPUT_DIR, CACHE_DIR, PROMPTS_DIR):
     _p.mkdir(parents=True, exist_ok=True)
@@ -23,9 +37,19 @@ DATASET_SPLIT: str = "train"
 # برای تست سریع روی CPU می‌توانید مقدار زیر را کوچک نگه دارید (مثلاً 200).
 # None یعنی کل دیتاست. / None means the whole dataset.
 SAMPLE_LIMIT: int | None = 500
-# فیلدهای متنی دیتاست که با هم به‌عنوان «utterance» برای لیبل‌گذاری استفاده می‌شوند.
-# Fields merged to form one utterance for semantic labeling.
+# فیلدهای متنی دیتاست. در حالت patient فقط شرح مراجع استفاده می‌شود.
+# Dataset text fields. In "patient" mode only the client's description is labeled.
 DATASET_TEXT_FIELDS: tuple[str, ...] = ("instruction", "input", "output")
+# "patient" = فقط input (یا instruction غیرقالبی)؛ "all" = instruction+input+output
+# "patient" avoids the repeated counselor prompt + therapy reply that collapse labels to F.
+LABEL_TEXT_MODE: str = "patient"
+GENERIC_COUNSELOR_MARKERS: tuple[str, ...] = (
+    "mental health counselling assistant",
+    "mental health counseling assistant",
+    "helpful mental health",
+    "دستیار مشاوره",
+    "مشاوره سلامت روان",
+)
 # نسخه‌ی فارسی ترجمه‌شده‌ی MentalChat16K (JSONL یا CSV).
 # Persian translation of MentalChat16K (JSONL or CSV).
 PERSIAN_DATASET_PATH: Path = DATA_DIR / "mentalchat16k_fa.jsonl"

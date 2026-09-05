@@ -74,6 +74,27 @@ def render_dataset_selector(key_prefix: str = "ds") -> tuple[str, str | None]:
     return "fa", custom.strip() or None
 
 
+def render_text_mode_selector(
+    key: str = "text_mode",
+    default: str | None = None,
+) -> str:
+    options = ["patient", "all"]
+    default = default or config.LABEL_TEXT_MODE
+    if default not in options:
+        default = "patient"
+    return st.selectbox(
+        "Text used for labeling",
+        options=options,
+        index=options.index(default),
+        key=key,
+        format_func={
+            "patient": "Patient only (recommended — skips counselor prompt/reply)",
+            "all": "instruction + input + output (old behavior)",
+        }.__getitem__,
+        help="Patient-only text stops category F from winning every counseling sample.",
+    )
+
+
 def render_limit_input(key: str = "limit", default: int = 50) -> int:
     return st.number_input(
         "Sample limit (0 = all)",

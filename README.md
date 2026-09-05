@@ -16,7 +16,7 @@
 4. `gap_analysis.py` — توزیع دسته‌ها، آمار امتیاز، دسته‌های قوی/ضعیف و نمودار.
 5. `main.py` — اجرای تک‌پیکربندی.
 6. `compare_runs.py` — مقایسه‌ی ۵ پیکربندی.
-7. `export_for_translation.py` + `prompts/semantic_persian_translation.txt` — خروجی برای ترجمه‌ی GPT-4+.
+7. `export_for_translation.py` + `translate_dataset.py` + `prompts/semantic_persian_translation.txt` — خروجی و ترجمه‌ی GPT-4+.
 
 ## مدل‌های امبدینگ
 
@@ -25,8 +25,6 @@
 | `minilm` | `paraphrase-multilingual-MiniLM-L12-v2` | مدل task اول |
 | `bge-m3` | `BAAI/bge-m3` | مدل قوی‌تر چندزبانه |
 | `e5-large` | `intfloat/multilingual-e5-large` | با prefixهای `query:` / `passage:` |
-
-## ماتریس مقایسه (۵ اجرا)
 
 ## ماتریس مقایسه (۵ اجرا) — همه با فکت فارسی
 
@@ -45,15 +43,32 @@
 ```bash
 python -m venv .venv
 .venv\Scripts\activate          # Windows
+# source .venv/bin/activate     # Linux / macOS
 pip install -r requirements.txt
+```
+
+## Docker
+
+```bash
+cp .env.example .env    # اختیاری؛ HF_TOKEN یا OPENAI_API_KEY
+docker compose up --build
+```
+
+UI روی [http://localhost:8501](http://localhost:8501) باز می‌شود. مدل‌ها بار اول دانلود می‌شوند و در volume `model_cache` می‌مانند. خروجی‌ها در `./outputs` و داده در `./data` ذخیره می‌شوند.
+
+```bash
+# یک اجرای CLI داخل همان ایمیج
+docker compose run --rm pipeline main.py --limit 50 --model minilm --fact-lang fa --dataset en
 ```
 
 ## ترجمه‌ی دیتاست به فارسی
 
 ```bash
 python export_for_translation.py --limit 500
-# سپس با پرامپت prompts/semantic_persian_translation.txt (GPT-4+) ترجمه کنید
-# و خروجی را در data/mentalchat16k_fa.jsonl ذخیره کنید
+# اختیاری، اگر OPENAI_API_KEY دارید:
+# python translate_dataset.py --limit 500
+# یا دستی با prompts/semantic_persian_translation.txt ترجمه کنید
+# خروجی: data/mentalchat16k_fa.jsonl
 ```
 
 ## UI / رابط کاربری (پیشنهادی)
@@ -67,6 +82,8 @@ python export_for_translation.py --limit 500
 launch_ui.bat
 # یا
 streamlit run ui.py
+# یا
+docker compose up --build
 ```
 
 صفحات UI:
@@ -122,6 +139,7 @@ python -m pytest
 ## Notes / یادداشت‌ها
 
 * تطبیق معنایی است، نه کلمه‌ای.
+* به‌طور پیش‌فرض فقط متن بیمار (`input`) لیبل می‌شود، نه پرامپت مشاور و پاسخ درمانی (`LABEL_TEXT_MODE=patient`).
 * امتیاز هر دسته = حداکثر شباهت روی prototypeهای همان دسته (با زبان انتخاب‌شده).
 * برای e5، نمونه‌ها `query:` و فکت‌ها `passage:` prefix می‌گیرند.
 * gap analysis مشخص می‌کند کدام دسته‌ها پوشش ضعیف دارند و برای RAG/fine-tuning به داده‌ی مکمل نیاز دارند.

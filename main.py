@@ -76,6 +76,13 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="پوشه‌ی خروجی (پیش‌فرض: outputs/)",
     )
+    p.add_argument(
+        "--text-mode",
+        type=str,
+        default=None,
+        choices=["patient", "all"],
+        help="patient = فقط شرح مراجع؛ all = instruction+input+output",
+    )
     return p.parse_args()
 
 
@@ -87,12 +94,15 @@ def run_pipeline(
     dataset_path: str | Path | None = None,
     output_dir: str | Path | None = None,
     run_meta: dict | None = None,
+    text_mode: str | None = None,
 ) -> dict:
     """اجرای یک پیکربندی کامل؛ گزارش gap analysis را برمی‌گرداند."""
     if limit is None:
         limit = config.SAMPLE_LIMIT
     if limit is not None and limit <= 0:
         limit = None
+    if text_mode:
+        config.LABEL_TEXT_MODE = text_mode
 
     out_dir = Path(output_dir) if output_dir else config.OUTPUT_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -109,6 +119,7 @@ def run_pipeline(
         "dataset": dataset,
         "dataset_path": str(dataset_path) if dataset_path else None,
         "limit": limit,
+        "label_text_mode": config.LABEL_TEXT_MODE,
         **(run_meta or {}),
     }
 
@@ -184,6 +195,7 @@ def main() -> int:
             dataset=args.dataset,
             dataset_path=args.dataset_path,
             output_dir=args.out,
+            text_mode=args.text_mode,
         )
     except FileNotFoundError as e:
         print(f"[main] ERROR: {e}", file=sys.stderr)

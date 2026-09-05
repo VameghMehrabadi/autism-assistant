@@ -107,6 +107,8 @@ def summarize_run(report: dict, run_cfg: dict) -> dict:
         "ranking_weak_to_strong": report["ranking_weak_to_strong"],
         "counts": {c: pc[c]["count"] for c in CATEGORY_KEYS},
         "shares": {c: pc[c]["share"] for c in CATEGORY_KEYS},
+        "multi_counts": {c: pc[c].get("multi_count", 0) for c in CATEGORY_KEYS},
+        "multi_shares": {c: pc[c].get("multi_share", 0.0) for c in CATEGORY_KEYS},
         "mean_scores": {c: pc[c]["mean_score"] for c in CATEGORY_KEYS},
         "global_mean_score_per_category": report["global_mean_score_per_category"],
     }
@@ -133,6 +135,7 @@ def build_comparison_table(summaries: list[dict]) -> pd.DataFrame:
         for c in CATEGORY_KEYS:
             row[f"count_{c}"] = s["counts"][c]
             row[f"share_{c}"] = s["shares"][c]
+            row[f"multi_{c}"] = s.get("multi_counts", {}).get(c, 0)
             row[f"mean_{c}"] = s["mean_scores"][c]
         rows.append(row)
     return pd.DataFrame(rows)
@@ -169,13 +172,28 @@ def render_comparison_markdown(summaries: list[dict], table: pd.DataFrame) -> st
 
     lines += [
         "",
-        "## Category mean top-1 score",
+        "## Category multi-label share (%)",
         "",
         "| Run | " + " | ".join(CATEGORY_KEYS) + " |",
         "|-----|" + "|".join(["------"] * len(CATEGORY_KEYS)) + "|",
     ]
     for s in summaries:
-        means = " | ".join(str(s["mean_scores"][c]) for c in CATEGORY_KEYS)
+        multi = s.get("multi_shares") or {
+            c: 0.0 for c in CATEGORY_KEYS
+        }
+        shares = " | ".join(f"{multi[c]:.1%}" for c in CATEGORY_KEYS)
+        lines.append(f"| `{s['id']}` | {shares} |")
+
+    lines += [
+        "",
+        "## Category global mean similarity",
+        "",
+        "| Run | " + " | ".join(CATEGORY_KEYS) + " |",
+        "|-----|" + "|".join(["------"] * len(CATEGORY_KEYS)) + "|",
+    ]
+    for s in summaries:
+        gmeans = s.get("global_mean_score_per_category") or s["mean_scores"]
+        means = " | ".join(str(gmeans[c]) for c in CATEGORY_KEYS)
         lines.append(f"| `{s['id']}` | {means} |")
 
     lines += [
@@ -186,6 +204,9 @@ def render_comparison_markdown(summaries: list[dict], table: pd.DataFrame) -> st
         "on the original MentalChat16K (task 1 rerun + two stronger multilingual models).",
         "- Runs 4–5 use **Persian facts × Persian dataset** after GPT-4+ translation "
         "(matched-language condition).",
+        "- Labeling uses **patient-only** text by default (skips the repeated "
+        "counselor prompt and therapy reply that used to collapse almost all "
+        "samples onto category F).",
         "- Prefer models whose category ranking is stable and whose confident_rate "
         "is not dominated by a single category unless that matches domain priors.",
         "",

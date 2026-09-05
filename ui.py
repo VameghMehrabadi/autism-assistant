@@ -52,8 +52,8 @@ def main() -> None:
     st.markdown(
         """
 ### Launch checklist
-1. Activate the venv and install deps (`pip install -r requirements.txt`).
-2. Open this UI with `streamlit run ui.py`, `python ui.py`, or `launch_ui.ps1`.
+1. Install deps (`pip install -r requirements.txt`) **or** run `docker compose up`.
+2. Open this UI with `streamlit run ui.py`, `launch_ui.ps1`, or http://localhost:8501 in Docker.
 3. Use the **pages in the sidebar** to run each stage.
 """
     )

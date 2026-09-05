@@ -44,14 +44,16 @@ def render_gap_summary(report: dict) -> None:
         rows.append({
             "Cat": cat,
             "Title": data.get("title", ""),
-            "Count": data.get("count", 0),
+            "Top-1": data.get("count", 0),
             "Share": data.get("share", 0),
-            "Mean score": data.get("mean_score", 0),
+            "Multi": data.get("multi_count", 0),
+            "Multi share": data.get("multi_share", 0),
+            "Global mean": data.get("global_mean_score", data.get("mean_score", 0)),
         })
     if rows:
         df = pd.DataFrame(rows)
         st.dataframe(df, use_container_width=True, hide_index=True)
-        st.bar_chart(df.set_index("Cat")["Count"])
+        st.bar_chart(df.set_index("Cat")[["Top-1", "Multi"]])
 
 
 def list_output_runs(base: Path) -> list[Path]:
