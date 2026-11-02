@@ -158,37 +158,90 @@ class SemanticLabeler:
         threshold: float = config.LABEL_THRESHOLD,
         multi_label: bool = config.MULTI_LABEL,
     ) -> list[dict]:
-        results: list[dict] = []
-        order = np.argsort(scores, axis=1)[:, ::-1]
-        n_categories = scores.shape[1]
+        return [
+            assign_label_row(
+                scores[i],
+                self.cat_keys,
+                threshold=threshold,
+                multi_label=multi_label,
+            )
+            for i in range(scores.shape[0])
+        ]
 
-        for i in range(scores.shape[0]):
-            row_order = order[i]
-            top_idx = int(row_order[0])
-            top_cat = self.cat_keys[top_idx]
-            top_score = float(scores[i, top_idx])
 
-            if multi_label:
-                above = [
-                    self.cat_keys[j]
-                    for j in row_order
-                    if scores[i, j] >= threshold
-                ]
-                labels = above if above else [top_cat]
-            else:
-                labels = [top_cat] if top_score >= threshold else ["NONE"]
+# Stored in labeled.csv. An empty field means "no accepted label", not "missing".
+LABEL_SEPARATOR = "|"
+UNLABELED = "NONE"
 
-            results.append({
-                "top_label": top_cat,
-                "top_score": round(top_score, 4),
-                "labels": labels,
-                "score_vector": {
-                    self.cat_keys[j]: round(float(scores[i, j]), 4)
-                    for j in range(n_categories)
-                },
-                "confident": top_score >= threshold,
-            })
-        return results
+
+def assign_label_row(
+    row: np.ndarray,
+    categories: list[str],
+    threshold: float = config.LABEL_THRESHOLD,
+    multi_label: bool = config.MULTI_LABEL,
+) -> dict:
+    """Decide one sample.
+
+    top_label is always the highest-scoring category and is diagnostic only.
+    labels is the set allowed to enter later stages:
+    - multi-label: every category at or above the threshold, best score first.
+      This list is empty when nothing clears the threshold.
+    - single-label: the top category, or "NONE" when it is below the threshold.
+    confident is true only when the top score clears the threshold.
+    """
+    if len(categories) != len(row):
+        raise ValueError(
+            f"Expected {len(categories)} scores, got {len(row)}."
+        )
+
+    order = np.argsort(np.asarray(row, dtype=float))[::-1]
+    top_idx = int(order[0])
+    top_score = float(row[top_idx])
+    confident = top_score >= threshold
+
+    if multi_label:
+        labels = [
+            categories[int(j)]
+            for j in order
+            if float(row[int(j)]) >= threshold
+        ]
+    else:
+        labels = [categories[top_idx]] if confident else [UNLABELED]
+
+    return {
+        "top_label": categories[top_idx],
+        "top_score": round(top_score, 4),
+        "labels": labels,
+        "score_vector": {
+            categories[j]: round(float(row[j]), 4) for j in range(len(categories))
+        },
+        "confident": confident,
+    }
+
+
+def format_labels(labels: list[str]) -> str:
+    """Serialize accepted labels. An empty list stays an empty cell."""
+    return LABEL_SEPARATOR.join(labels)
+
+
+def parse_labels(raw: object, fallback_top: str | None = None) -> list[str]:
+    """Read accepted labels back from a CSV cell or an in-memory list.
+
+    A blank or missing cell is an explicit empty decision and is not replaced
+    by top_label. fallback_top is used only when the labels column itself is
+    absent from an older file.
+    """
+    if isinstance(raw, (list, tuple)):
+        return [str(item) for item in raw if item and str(item) != UNLABELED]
+    if raw is None or (isinstance(raw, float) and np.isnan(raw)):
+        return []
+    if isinstance(raw, str):
+        if not raw.strip():
+            return []
+        return [part for part in raw.split(LABEL_SEPARATOR) if part and part != UNLABELED]
+    if fallback_top and fallback_top != UNLABELED:
+        return [fallback_top]
+    return []
 
 
 def label_texts(

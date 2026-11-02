@@ -32,3 +32,18 @@ def test_gap_report_counts_multi_label_even_when_top1_is_zero():
     assert report["per_category"]["E"]["multi_count"] == 1
     assert report["per_category"]["D"]["global_mean_score"] > 0
     assert report["per_category"]["D"]["mean_score"] == 0.0
+
+
+def test_empty_multi_labels_are_not_counted_as_top_label():
+    """Blank and CSV-NaN label cells must not count the diagnostic top-1."""
+    n_cats = len(CATEGORY_KEYS)
+    scores = np.full((2, n_cats), 0.2, dtype=float)
+    df = pd.DataFrame({
+        "top_label": ["F", "F"],
+        "top_score": [0.2, 0.2],
+        "labels": ["", np.nan],
+    })
+
+    report = build_report(df, scores, threshold=0.35)
+    assert report["per_category"]["F"]["count"] == 2
+    assert report["per_category"]["F"]["multi_count"] == 0

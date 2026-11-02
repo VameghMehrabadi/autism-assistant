@@ -22,6 +22,7 @@ import pandas as pd
 
 import config
 from facts import CATEGORIES, CATEGORY_KEYS
+from labeler import parse_labels
 
 
 def _category_label(cat: str) -> str:
@@ -29,20 +30,20 @@ def _category_label(cat: str) -> str:
 
 
 def _label_lists(df: pd.DataFrame) -> list[list[str]]:
-    """لیبل‌های multi-label هر نمونه؛ اگر ستون نباشد فقط top-1."""
-    tops = df["top_label"].astype(str).tolist()
+    """Accepted labels per sample.
+
+    Older files without a labels column fall back to top-1. A present but
+    empty labels cell stays empty, so an uncertain top category is not counted
+    as covered.
+    """
     if "labels" not in df.columns:
-        return [[t] for t in tops]
-    out: list[list[str]] = []
-    for raw, top in zip(df["labels"], tops):
-        if isinstance(raw, (list, tuple)):
-            labs = [str(x) for x in raw if x and str(x) != "NONE"]
-        elif isinstance(raw, str) and raw.strip():
-            labs = [x for x in raw.split("|") if x and x != "NONE"]
-        else:
-            labs = [top] if top != "NONE" else []
-        out.append(labs)
-    return out
+        tops = (
+            df["top_label"].astype(str).tolist()
+            if "top_label" in df.columns
+            else [""] * len(df)
+        )
+        return [[] if top in {"", "NONE"} else [top] for top in tops]
+    return [parse_labels(raw) for raw in df["labels"]]
 
 
 def build_report(df: pd.DataFrame, scores: np.ndarray,
