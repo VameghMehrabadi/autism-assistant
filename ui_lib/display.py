@@ -23,7 +23,8 @@ def render_label_result(result: dict) -> None:
     left, right = st.columns([2, 3])
     with left:
         st.metric("Top category", f"{top_label} — {title}", delta=f"{result['top_score']:.4f}")
-        st.markdown("**Labels:** " + ", ".join(result["labels"]))
+        accepted = ", ".join(result["labels"]) or "none (below threshold)"
+        st.markdown("**Labels:** " + accepted)
         st.write("✅ Confident" if result["confident"] else "⚠️ Below confidence threshold")
     with right:
         score_df = build_score_table(result["score_vector"])

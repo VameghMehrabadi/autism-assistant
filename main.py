@@ -22,7 +22,7 @@ import pandas as pd
 import config
 from data_loader import load_samples
 from gap_analysis import run as run_gap_analysis
-from labeler import SemanticLabeler, resolve_model
+from labeler import SemanticLabeler, format_labels, resolve_model
 
 
 def _reconfigure_stdio_utf8() -> None:
@@ -144,7 +144,7 @@ def run_pipeline(
             "text": s.text,
             "top_label": r["top_label"],
             "top_score": r["top_score"],
-            "labels": "|".join(r["labels"]),
+            "labels": format_labels(r["labels"]),
             "confident": r["confident"],
             **{f"score_{k}": r["score_vector"][k] for k in r["score_vector"]},
         })
