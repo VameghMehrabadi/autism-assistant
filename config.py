@@ -176,6 +176,12 @@ LOG_LEVEL: str = "INFO"
 # نسخه‌ی موتور لیبل‌گذاری؛ در نتایج و گزارش‌ها ذخیره می‌شود.
 # Labeling engine version recorded in results and reports.
 LABELER_VERSION: str = "3.0.0"
+
+# --- Phase 6b: ارائه‌دهنده‌ی Z.ai (GLM) / Z.ai (GLM) provider ---
+# OpenAI-compatible endpoint of the Z.ai platform; override with ZAI_BASE_URL.
+# Credentials come from the ZAI_API_KEY environment variable (never hardcoded).
+ZAI_API_BASE_URL: str = "https://api.z.ai/api/paas/v4"
+ZAI_MODEL: str = "glm-5.3-flash"
 # کش دیسکی امبدینگ‌ها (کلید = مدل + prefix + نقش + متن نرمال‌شده).
 # Disk cache for embeddings (key = model + prefix + role + normalized text).
 EMBED_CACHE_ENABLED: bool = True

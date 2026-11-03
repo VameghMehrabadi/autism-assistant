@@ -110,31 +110,52 @@ class MockProvider(TranslationProvider):
 
 
 class OpenAIProvider(TranslationProvider):
-    """OpenAI chat provider (lazy import; credentials from environment)."""
+    """OpenAI-compatible chat provider (Z.ai's GLM API is OpenAI-compatible,
+    so the same class serves ``openai`` and ``zai`` — only the base URL,
+    API-key variable, and model id differ; nothing model-specific is baked
+    in). Lazy import; credentials from arguments or the environment."""
 
-    name = "openai"
+    name = "openai-compatible"
 
     def __init__(
         self,
         model: str = "gpt-4o",
         api_key: str | None = None,
         timeout: float = 60.0,
+        base_url: str | None = None,
     ):
         self.model = model
         self.timeout = timeout
+        self.base_url = base_url
         self._api_key = api_key or os.environ.get("OPENAI_API_KEY")
         if not self._api_key:
             raise TranslationError(
                 "config",
                 "OPENAI_API_KEY is not set; export it or choose --provider mock.",
             )
+        # Token accounting from API usage metadata (input and output tokens
+        # are tracked separately — they are not interchangeable).
+        self.usage: dict[str, int] = {
+            "requests": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        }
         try:
             from openai import OpenAI  # lazy: only needed for real translation
         except ImportError as exc:
             raise TranslationError(
                 "config", f"openai package is not installed ({exc}); pip install openai"
             ) from exc
-        self._client = OpenAI(api_key=self._api_key, timeout=timeout)
+        client_kwargs: dict[str, Any] = {
+            "api_key": self._api_key,
+            "timeout": timeout,
+            # The engine owns retry/backoff; the SDK must not retry silently.
+            "max_retries": 0,
+        }
+        if base_url:
+            client_kwargs["base_url"] = base_url
+        self._client = OpenAI(**client_kwargs)
 
     def translate(self, segments: list[str]) -> str:
         try:
@@ -146,6 +167,7 @@ class OpenAIProvider(TranslationProvider):
                 ],
                 temperature=0,
             )
+            _accumulate_usage(getattr(response, "usage", None), self.usage)
             content = response.choices[0].message.content or ""
             if not content.strip():
                 raise TranslationError("invalid_response", "provider returned empty content")
@@ -154,6 +176,38 @@ class OpenAIProvider(TranslationProvider):
             raise
         except Exception as exc:  # map SDK exceptions to kinds
             raise _map_provider_exception(exc) from exc
+
+
+def _accumulate_usage(usage: Any, totals: dict[str, int]) -> None:
+    """Add one API response's usage metadata to the running totals."""
+    if usage is None:
+        return
+    totals["requests"] += 1
+    totals["prompt_tokens"] += int(getattr(usage, "prompt_tokens", 0) or 0)
+    totals["completion_tokens"] += int(getattr(usage, "completion_tokens", 0) or 0)
+    totals["total_tokens"] += int(getattr(usage, "total_tokens", 0) or 0)
+
+
+def resolve_zai_config(env: dict[str, str] | None = None) -> tuple[str, str, str]:
+    """Resolve Z.ai credentials/endpoint from the environment.
+
+    Returns ``(api_key, base_url, model)``. The key is read from
+    ``ZAI_API_KEY`` (fallback ``ZHIPU_API_KEY``); the endpoint from
+    ``ZAI_BASE_URL`` (fallback ``config.ZAI_API_BASE_URL``). Raises a
+    :class:`TranslationError` (kind ``config``) when no key is configured.
+    """
+    import config  # noqa: PLC0415 — local to keep module import light
+
+    env = env if env is not None else os.environ
+    api_key = env.get("ZAI_API_KEY") or env.get("ZHIPU_API_KEY")
+    if not api_key:
+        raise TranslationError(
+            "config",
+            "ZAI_API_KEY is not set. Export it (never commit it): "
+            "export ZAI_API_KEY='<key>' — or choose --provider mock.",
+        )
+    base_url = env.get("ZAI_BASE_URL") or config.ZAI_API_BASE_URL
+    return api_key, base_url, config.ZAI_MODEL
 
 
 def _map_provider_exception(exc: Exception) -> TranslationError:
@@ -333,6 +387,7 @@ class EngineSummary:
     flagged: int = 0
     empty_source: int = 0
     failed: int = 0
+    stop_reason: str = ""  # "" = completed; "quota_cap" = token budget reached
     errors: list[EngineError] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -353,6 +408,7 @@ class TranslationEngine:
         base_backoff: float = 2.0,
         inter_request_sleep: float = 0.0,
         progress_every: int = 25,
+        max_total_tokens: int | None = None,
     ):
         if batch_size < 1:
             raise ValueError("batch_size must be >= 1")
@@ -364,6 +420,9 @@ class TranslationEngine:
         self.base_backoff = float(base_backoff)
         self.inter_request_sleep = float(inter_request_sleep)
         self.progress_every = int(progress_every)
+        self.max_total_tokens = (
+            int(max_total_tokens) if max_total_tokens is not None else None
+        )
         self._rng = random.Random(42)  # jitter; deterministic seed
 
     # -- core: translate a mapping of work items --------------------------
@@ -514,8 +573,19 @@ class TranslationEngine:
                 if idx not in emitted and idx not in failed_idx and record_complete(idx):
                     emit(idx)
 
+        def quota_exceeded() -> bool:
+            """Hard token-budget guard: input and output tokens both count."""
+            cap = self.max_total_tokens
+            if cap is None:
+                return False
+            usage = getattr(self.provider, "usage", None)
+            return bool(usage and usage.get("total_tokens", 0) >= cap)
+
         work: list[tuple[int, str, str]] = []
         for record in records:
+            if quota_exceeded():
+                summary.stop_reason = "quota_cap"
+                break
             if record.idx in records_by_idx:
                 summary.duplicates_skipped += 1
                 continue
@@ -531,21 +601,29 @@ class TranslationEngine:
                 continue
             work.extend((record.idx, f, t) for f, t in record.fields.items())
             while len(work) >= self.batch_size:
+                if quota_exceeded():
+                    summary.stop_reason = "quota_cap"
+                    return
                 flush_slice(work[: self.batch_size])
                 work = work[self.batch_size :]
                 if self.inter_request_sleep:
                     time.sleep(self.inter_request_sleep)
                 if on_progress and self.progress_every and len(emitted) and len(emitted) % self.progress_every == 0:
                     on_progress(len(emitted))
-        while work:
-            flush_slice(work[: self.batch_size])
-            work = work[self.batch_size :]
+        if not summary.stop_reason:
+            while work:
+                if quota_exceeded():
+                    summary.stop_reason = "quota_cap"
+                    break
+                flush_slice(work[: self.batch_size])
+                work = work[self.batch_size :]
         # Defensive drain: a record whose fields all succeeded but that was
         # never emitted (should not happen) is emitted here, never lost.
-        for idx in list(records_by_idx):
-            if idx not in emitted and idx not in failed_idx and records_by_idx[idx].fields:
-                if record_complete(idx):
-                    emit(idx)
+        if not summary.stop_reason:
+            for idx in list(records_by_idx):
+                if idx not in emitted and idx not in failed_idx and records_by_idx[idx].fields:
+                    if record_complete(idx):
+                        emit(idx)
 
     def translate_records(self, records: list[SourceRecord]) -> tuple[list[dict], EngineSummary]:
         """Translate normalized records in memory (no file I/O)."""
@@ -692,35 +770,135 @@ def _write_error_log(path: Path, errors: list[EngineError]) -> None:
 # --------------------------------------------------------------------------
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Persian translation of MentalChat16K.")
     p.add_argument("--src", type=str,
                    default=str(config.DATA_DIR / "mentalchat16k_en_for_translation.jsonl"))
     p.add_argument("--out", type=str, default=str(config.PERSIAN_DATASET_PATH))
     p.add_argument("--prompt", type=str, default=str(SYSTEM_PROMPT_PATH),
                    help="kept for compatibility; the system prompt file is used by the engine")
-    p.add_argument("--provider", type=str, default="openai", choices=["openai", "mock"])
-    p.add_argument("--model", type=str, default="gpt-4o")
+    p.add_argument("--provider", type=str, default="openai",
+                   choices=["openai", "zai", "mock"],
+                   help="zai = Z.ai GLM (OpenAI-compatible endpoint, ZAI_API_KEY)")
+    p.add_argument("--model", type=str, default=None,
+                   help="provider model id (default: gpt-4o for openai, "
+                        "config.ZAI_MODEL for zai)")
+    p.add_argument("--base-url", type=str, default=None,
+                   help="override the API base URL (default: provider default; "
+                        "Z.ai: config.ZAI_API_BASE_URL or ZAI_BASE_URL env)")
     p.add_argument("--batch-size", type=int, default=1)
     p.add_argument("--max-retries", type=int, default=3)
     p.add_argument("--timeout", type=float, default=60.0)
     p.add_argument("--sleep", type=float, default=0.4,
                    help="inter-request politeness delay in seconds")
     p.add_argument("--limit", type=int, default=None)
+    p.add_argument("--max-total-tokens", type=int, default=None,
+                   help="hard stop once the provider reports this many total "
+                        "tokens (input+output) — protects the account quota")
+    p.add_argument("--probe", action="store_true",
+                   help="verify endpoint/auth/model access with one benign "
+                        "request, print the verification report, and exit")
     p.add_argument("--error-log", type=str, default=str(config.DATA_DIR / "translation_errors.jsonl"))
     p.add_argument("--summary-out", type=str,
                    default=str(config.DATA_DIR / "translation_summary.json"))
     p.add_argument(
         "--confirm-external-sharing", action="store_true",
         help="acknowledge that conversation content will be sent to the configured "
-             "external provider (required for --provider openai; review privacy "
-             "and licensing constraints first)",
+             "external provider (required for --provider openai and zai; review "
+             "privacy and licensing constraints first)",
     )
-    return p.parse_args()
+    return p.parse_args(argv)
 
 
-def main() -> int:
-    args = parse_args()
+def _default_model(args: argparse.Namespace) -> str:
+    if args.model:
+        return args.model
+    return config.ZAI_MODEL if args.provider == "zai" else "gpt-4o"
+
+
+def build_provider(args: argparse.Namespace) -> TranslationProvider:
+    """Instantiate the configured provider with safety guards."""
+    if args.provider == "mock":
+        if Path(args.out).resolve() == config.PERSIAN_DATASET_PATH.resolve():
+            raise TranslationError(
+                "config",
+                f"refusing to write mock output to the production dataset path "
+                f"({config.PERSIAN_DATASET_PATH}); choose a different --out.",
+            )
+        return MockProvider()
+    if args.provider == "zai":
+        if not args.confirm_external_sharing:
+            raise TranslationError(
+                "config",
+                "the zai provider uploads conversation content to an external "
+                "service. Review your privacy and licensing constraints, then "
+                "pass --confirm-external-sharing to acknowledge.",
+            )
+        api_key, base_url, default_model = resolve_zai_config()
+        return OpenAIProvider(
+            model=_default_model(args) or default_model,
+            api_key=api_key,
+            timeout=args.timeout,
+            base_url=args.base_url or base_url,
+        )
+    if args.provider == "openai":
+        if not args.confirm_external_sharing:
+            raise TranslationError(
+                "config",
+                "the openai provider uploads conversation content to an external "
+                "service. Review your privacy and licensing constraints, then "
+                "pass --confirm-external-sharing to acknowledge.",
+            )
+        return OpenAIProvider(model=_default_model(args), timeout=args.timeout)
+    raise TranslationError("config", f"unknown provider '{args.provider}'")
+
+
+def run_probe(args: argparse.Namespace) -> int:
+    """Verify endpoint, authentication, model access, and the response
+    protocol with ONE benign request (no dataset content is sent)."""
+    started = time.monotonic()
+    try:
+        provider = build_provider(args)
+    except TranslationError as exc:
+        print(f"[probe] CONFIG ERROR: {exc}", file=sys.stderr)
+        return 2
+    probe_segment = "The therapist recommended a consistent daily routine."
+    print(f"[probe] provider={provider.name} model={provider.model}")
+    print(f"[probe] base_url={getattr(provider, 'base_url', None) or 'provider default'}")
+    try:
+        content = provider.translate([probe_segment])
+        parsed = parse_batch_response(content, 1)
+    except TranslationError as exc:
+        kind = getattr(exc, "kind", "error")
+        print(f"[probe] FAILED: kind={kind}: {exc}", file=sys.stderr)
+        if kind in {"parse", "invalid_response"}:
+            print(
+                "[probe] authentication and model access may be fine but the "
+                "response did not follow the JSON-array protocol — check the "
+                "system prompt and model id.",
+                file=sys.stderr,
+            )
+        return 2
+    latency_ms = (time.monotonic() - started) * 1000
+    usage = getattr(provider, "usage", {})
+    translation = parsed[0]
+    print("[probe] OK: endpoint reachable, authentication accepted, model responded")
+    print(f"[probe] protocol: valid 1-element JSON array; element length={len(translation)}")
+    print(f"[probe] latency={latency_ms:.0f} ms")
+    print(f"[probe] usage(metadata): {usage}")
+    print(
+        "[probe] note: rate limits are enforced server-side (handled by the "
+        "engine's backoff) and are not queryable via the API; quota is tracked "
+        "from usage metadata (--max-total-tokens enforces a hard cap)."
+    )
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    if args.probe:
+        return run_probe(args)
+
     src, out = Path(args.src), Path(args.out)
     if not src.exists():
         print(f"[translate] ERROR: missing source {src}", file=sys.stderr)
@@ -738,26 +916,24 @@ def main() -> int:
             file=sys.stderr,
         )
         return 2
-    if args.provider == "openai" and not args.confirm_external_sharing:
+    if args.provider in {"openai", "zai"} and not args.confirm_external_sharing:
         print(
-            "[translate] ERROR: the openai provider uploads conversation content to "
-            "an external service. Review your privacy and licensing constraints, "
-            "then pass --confirm-external-sharing to acknowledge.",
+            f"[translate] ERROR: the {args.provider} provider uploads conversation "
+            "content to an external service. Review your privacy and licensing "
+            "constraints, then pass --confirm-external-sharing to acknowledge.",
             file=sys.stderr,
         )
         return 2
 
     try:
-        if args.provider == "mock":
-            provider: TranslationProvider = MockProvider()
-        else:
-            provider = OpenAIProvider(model=args.model, timeout=args.timeout)
+        provider = build_provider(args)
     except TranslationError as exc:
         print(f"[translate] ERROR: {exc}", file=sys.stderr)
         if exc.kind == "config":
             print(
-                "[translate] BLOCKER: no API credentials available. "
-                "Set OPENAI_API_KEY (never commit it) and rerun, "
+                "[translate] BLOCKER: provider configuration is incomplete. "
+                "Set the credentials environment variable (OPENAI_API_KEY or "
+                "ZAI_API_KEY — never commit it) and rerun, "
                 "or use --provider mock for a mechanics-only smoke test.",
                 file=sys.stderr,
             )
@@ -781,6 +957,7 @@ def main() -> int:
         batch_size=args.batch_size,
         max_retries=args.max_retries,
         inter_request_sleep=args.sleep,
+        max_total_tokens=args.max_total_tokens,
     )
     summary = engine.run(src, out, error_log_path=Path(args.error_log), limit=args.limit)
 
@@ -811,12 +988,19 @@ def main() -> int:
         "completeness": completeness,
         "provider": provider.name,
         "model": provider.model,
+        "provider_usage": getattr(provider, "usage", None),
+        "stop_reason": summary.stop_reason or "completed",
     }
     Path(args.summary_out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.summary_out).write_text(
         json.dumps(summary_out, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     print(f"[translate] summary -> {args.summary_out}")
+    if summary.stop_reason == "quota_cap":
+        print(
+            "[translate] STOPPED at the token budget cap (--max-total-tokens). "
+            "Progress is checkpointed — rerun with a higher cap to continue."
+        )
     if report["issues_total"]:
         print(
             f"[translate] NOTE: {report['issues_total']} QA issue(s) recorded; "

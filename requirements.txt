@@ -19,4 +19,6 @@ matplotlib==3.11.2
 pandas==3.1.0
 pytest==9.2.0
 streamlit==1.66.1
-# optional: openai>=1.40.0   # only for translate_dataset.py
+openai==3.42.1
+# openai SDK drives both real providers (OPENAI_API_KEY / ZAI_API_KEY via the
+# OpenAI-compatible Z.ai endpoint); required for translate_dataset.py runs.
