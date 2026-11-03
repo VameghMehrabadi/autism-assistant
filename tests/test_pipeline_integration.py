@@ -72,7 +72,7 @@ def test_run_pipeline_end_to_end_offline(tmp_path, offline_labeler):
     assert len(labeled) == 5
     for column in (
         "idx", "text", "top_label", "top_score", "labels", "confident",
-        "decision", "matched_fact_ids", *(f"score_{c}" for c in CATEGORY_KEYS),
+        "decision", "margin", "matched_fact_ids", *(f"score_{c}" for c in CATEGORY_KEYS),
     ):
         assert column in labeled.columns, f"missing column {column}"
     assert set(labeled["decision"]).issubset({"labeled", "uncertain"})

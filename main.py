@@ -181,6 +181,7 @@ def run_pipeline(
             "labels": format_labels(r["labels"]),
             "confident": r["confident"],
             "decision": r.get("decision", ""),
+            "margin": r.get("margin"),
             "matched_fact_ids": ";".join(
                 f"{m['fact_id']}:{m['lang']}"
                 for m in r.get("matched_prototypes", [])
