@@ -1,0 +1,11 @@
+﻿datasets>=2.18.0
+huggingface-hub>=0.23.0
+sentence-transformers>=2.7.0
+torch>=2.2.0
+numpy>=1.26.0
+tqdm>=4.66.0
+matplotlib>=3.8.0
+pandas>=2.2.0
+pytest>=8.0.0
+streamlit>=1.30.0
+# optional: openai>=1.40.0   # only for translate_dataset.py

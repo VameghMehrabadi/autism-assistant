@@ -1,0 +1,43 @@
+services:
+  ui:
+    build: .
+    image: autism-assistant:latest
+    ports:
+      - "8501:8501"
+    environment:
+      AUTISM_CACHE_DIR: /cache
+      HF_HOME: /cache/hf
+      HF_HUB_CACHE: /cache/hf/hub
+      TRANSFORMERS_CACHE: /cache/hf/transformers
+      SENTENCE_TRANSFORMERS_HOME: /cache/hf/sentence-transformers
+      HF_TOKEN: ${HF_TOKEN:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    volumes:
+      - ./data:/app/data
+      - ./outputs:/app/outputs
+      - model_cache:/cache
+    restart: unless-stopped
+
+  # One-off CLI, same image:
+  #   docker compose run --rm pipeline main.py --limit 50 --model minilm --fact-lang fa --dataset en
+  pipeline:
+    image: autism-assistant:latest
+    build: .
+    profiles: ["cli"]
+    environment:
+      AUTISM_CACHE_DIR: /cache
+      HF_HOME: /cache/hf
+      HF_HUB_CACHE: /cache/hf/hub
+      TRANSFORMERS_CACHE: /cache/hf/transformers
+      SENTENCE_TRANSFORMERS_HOME: /cache/hf/sentence-transformers
+      HF_TOKEN: ${HF_TOKEN:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    volumes:
+      - ./data:/app/data
+      - ./outputs:/app/outputs
+      - model_cache:/cache
+    entrypoint: ["python"]
+    command: ["main.py", "--help"]
+
+volumes:
+  model_cache:

@@ -1,0 +1,289 @@
+"""فکت‌های اوتیسم در ۷ دسته (A–G) به‌عنوان prototypeهای معنایی.
+
+هر فکت دو نسخه‌ی انگلیسی و فارسی دارد. هنگام امبدینگ، دو نسخه به‌صورت دو prototype
+مستقل در نظر گرفته می‌شوند تا فضای معنایی چندزبانه بهتر پوشش داده شود.
+دسته‌ی G (دانش و آگاهی درباره‌ی اوتیسم) نیز در فاز لیبل‌گذاری داده استفاده می‌شود.
+
+متن فارسی نسخه‌ی نهایی تأییدشده است؛ انگلیسی با همان معنا هم‌تراز شده.
+"""
+from __future__ import annotations
+
+from collections import Counter
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class Fact:
+    id: int
+    category: str  # "A" .. "G"
+    en: str
+    fa: str
+
+
+class FactValidationError(ValueError):
+    """Raised when the fact inventory fails integrity validation."""
+
+
+def _is_arabic_script_char(ch: str) -> bool:
+    code = ord(ch)
+    return 0x0600 <= code <= 0x06FF
+
+
+def validate_facts(facts: list[Fact] | None = None) -> dict:
+    """Validate the fact inventory; raise :class:`FactValidationError` on any
+    structural problem. Returns a small summary dict otherwise.
+
+    Checks: known category, positive integer ids, unique ids, non-empty
+    bilingual texts, English text free of Arabic-script characters, and
+    Persian text being Arabic-script dominant (≥30% of letters).
+    """
+    facts = FACTS if facts is None else facts
+    errors: list[str] = []
+    seen_ids: set[int] = set()
+    per_category: Counter[str] = Counter()
+    for fact in facts:
+        if not isinstance(fact.id, int) or isinstance(fact.id, bool) or fact.id < 1:
+            errors.append(f"fact id {fact.id!r} is not a positive integer")
+        if fact.id in seen_ids:
+            errors.append(f"duplicate fact id {fact.id}")
+        seen_ids.add(fact.id)
+        if fact.category not in CATEGORIES:
+            errors.append(f"fact {fact.id}: unknown category {fact.category!r}")
+        else:
+            per_category[fact.category] += 1
+        if not isinstance(fact.en, str) or not fact.en.strip():
+            errors.append(f"fact {fact.id}: empty English text")
+        if not isinstance(fact.fa, str) or not fact.fa.strip():
+            errors.append(f"fact {fact.id}: empty Persian text")
+        if fact.en and any(_is_arabic_script_char(ch) for ch in fact.en):
+            errors.append(
+                f"fact {fact.id}: English text contains Arabic-script characters"
+            )
+        if fact.fa:
+            letters = [ch for ch in fact.fa if ch.isalpha()]
+            arabic = sum(1 for ch in letters if _is_arabic_script_char(ch))
+            if letters and arabic / len(letters) < 0.3:
+                errors.append(
+                    f"fact {fact.id}: Persian text is not Arabic-script dominant"
+                )
+    if errors:
+        preview = "; ".join(errors[:10])
+        more = f" (+{len(errors) - 10} more)" if len(errors) > 10 else ""
+        raise FactValidationError(f"{preview}{more}")
+    return {
+        "n_facts": len(facts),
+        "n_prototypes": 2 * len(facts),
+        "per_category": dict(per_category),
+    }
+
+
+# --- تعریف دسته‌ها / Category metadata ---
+CATEGORIES: dict[str, dict[str, str]] = {
+    "A": {"key": "A", "title_en": "Social Communication",
+          "title_fa": "ارتباطات و تعامل اجتماعی"},
+    "B": {"key": "B", "title_en": "Sensory Processing",
+          "title_fa": "پردازش حسی"},
+    "C": {"key": "C", "title_en": "Emotional Regulation & Stress",
+          "title_fa": "تنظیم هیجان و استرس"},
+    "D": {"key": "D", "title_en": "Routine & Predictability",
+          "title_fa": "روتین و پیش‌بینی‌پذیری"},
+    "E": {"key": "E", "title_en": "Special Interests & Strengths",
+          "title_fa": "علایق ویژه و نقاط قوت"},
+    "F": {"key": "F", "title_en": "Diagnosis & Support",
+          "title_fa": "تشخیص و حمایت"},
+    "G": {"key": "G", "title_en": "Autism Knowledge & Awareness",
+          "title_fa": "دانش و آگاهی درباره اوتیسم"},
+}
+
+CATEGORY_KEYS: list[str] = list(CATEGORIES.keys())
+
+
+FACTS: list[Fact] = [
+    # ---------- A. Social Communication ----------
+    Fact(1, "A",
+         "People with autism spectrum disorder may struggle with social communication and reading non-verbal cues.",
+         "افراد دارای اختلال طیف اوتیسم ممکن است در ارتباطات اجتماعی و درک نشانه‌های غیرکلامی چالش داشته باشند."),
+    Fact(2, "A",
+         "Eye contact can be difficult or exhausting for some people with autism spectrum disorder.",
+         "تماس چشمی برای برخی افراد دارای اختلال طیف اوتیسم دشوار یا خسته‌کننده است."),
+    Fact(3, "A",
+         "Difficulty understanding body language, tone of voice, sarcasm and social cues is common in autism.",
+         "دشواری در درک زبان بدن، لحن صدا، کنایه و نشانه‌های اجتماعی در اوتیسم شایع است."),
+    Fact(4, "A",
+         "People with autism spectrum disorder usually want to connect, but their way of communicating may be different.",
+         "افراد دارای اختلال طیف اوتیسم معمولاً به ارتباط علاقه دارند، اما ممکن است شیوه برقراری ارتباط آن‌ها متفاوت باشد."),
+    Fact(5, "A",
+         "Verbal skills in people with autism spectrum disorder vary widely, from non-speaking individuals to those able to express sentences.",
+         "مهارت‌های کلامی در افراد دارای اختلال طیف اوتیسم بسیار متنوع است؛ از افراد غیرکلامی تا افراد دارای توانایی بیان جمله."),
+    Fact(6, "A",
+         "People with autism spectrum disorder have feelings and empathy, but may express them differently from others.",
+         "افراد دارای اختلال طیف اوتیسم احساسات و همدلی دارند، اما ممکن است آن را متفاوت از دیگران ابراز کنند."),
+
+    # ---------- B. Sensory Processing ----------
+    Fact(7, "B",
+         "Many people with autism spectrum disorder have differences in sensory processing.",
+         "بسیاری از افراد دارای اختلال طیف اوتیسم تفاوت‌هایی در پردازش حسی دارند."),
+    Fact(8, "B",
+         "Hyper- or hypo-reactivity to sound, light, touch, smell or other stimuli is common.",
+         "حساسیت بیش از حد یا کمتر از حد معمول به صدا، نور، لمس، بو یا سایر محرک‌ها شایع است."),
+    Fact(9, "B",
+         "Sensory overload can cause anxiety, exhaustion or severe distress.",
+         "اضافه‌بار حسی (Sensory Overload) می‌تواند موجب اضطراب، خستگی یا ناراحتی شدید شود."),
+
+    # ---------- C. Emotional Regulation & Stress ----------
+    Fact(10, "C",
+         "Repetitive behaviors (stimming) often help regulate emotion or reduce stress.",
+         "رفتارهای تکراری (Stimming) اغلب به تنظیم هیجان یا کاهش استرس کمک می‌کنند."),
+    Fact(11, "C",
+         "Meltdowns, shutdowns or intense distress can occur when emotions become overwhelming.",
+         "وقتی هیجان‌ها بیش از حد شدید می‌شوند ممکن است فروپاشی هیجانی، خاموشی یا ناراحتی شدید رخ دهد."),
+    Fact(12, "C",
+         "People with autism spectrum disorder may need extra time and support to recover after emotional overload.",
+         "افراد دارای اختلال طیف اوتیسم ممکن است پس از اضافه‌بار هیجانی به زمان و حمایت بیشتری برای بازگشت به تعادل نیاز داشته باشند."),
+    Fact(13, "C",
+         "Anxiety, frustration or shutdown can be reduced with calm spaces and emotion-regulation strategies.",
+         "اضطراب، ناکامی یا خاموشی هیجانی را می‌توان با فضای آرام و راهبردهای تنظیم هیجان کاهش داد."),
+
+    # ---------- D. Routine & Predictability ----------
+    Fact(14, "D",
+         "Many people with autism spectrum disorder need consistency and predictability to feel safe.",
+         "بسیاری از افراد دارای اختلال طیف اوتیسم برای احساس امنیت به ثبات و پیش‌بینی‌پذیری نیاز دارند."),
+    Fact(15, "D",
+         "Sudden changes in plans or environment can be very hard for some people with autism spectrum disorder.",
+         "تغییر ناگهانی برنامه‌ها یا محیط می‌تواند برای برخی افراد دارای اختلال طیف اوتیسم بسیار دشوار باشد."),
+    Fact(16, "D",
+         "A preference for clearly defined routines is a common trait in the autism spectrum.",
+         "ترجیح روتین‌های مشخص یکی از ویژگی‌های رایج در طیف اوتیسم است."),
+
+    # ---------- E. Special Interests & Strengths ----------
+    Fact(17, "E",
+         "Many people with autism spectrum disorder have unusually intense or atypical interests.",
+         "بسیاری از افراد دارای اختلال طیف اوتیسم علایق بیش از حد غیرمعمول دارند."),
+    Fact(18, "E",
+         "Some people with autism spectrum disorder show remarkable skill or expertise in specific areas.",
+         "برخی افراد دارای اختلال طیف اوتیسم در زمینه‌های خاص مهارت یا تخصص چشمگیری دارند."),
+    Fact(19, "E",
+         "Long focus and high attention to detail are seen in some people with autism spectrum disorder.",
+         "تمرکز طولانی‌مدت و توجه زیاد به جزئیات در برخی افراد دارای اختلال طیف اوتیسم دیده می‌شود."),
+    Fact(20, "E",
+         "Autism does not mean low intelligence.",
+         "اوتیسم به معنای کم‌هوشی نیست."),
+    Fact(21, "E",
+         "People with autism spectrum disorder can have different IQ levels.",
+         "افراد دارای اختلال طیف اوتیسم می‌توانند بهره‌های هوشی متفاوتی داشته باشند."),
+    Fact(22, "E",
+         "Some people with high-level autism spectrum disorder may live independently, study, work and have ordinary relationships.",
+         "برخی افراد دارای اختلال طیف اوتیسم سطح بالا ممکن است زندگی مستقل، تحصیل، اشتغال و روابط عادی داشته باشند."),
+    Fact(23, "E",
+         "Not all people with autism spectrum disorder have savant syndrome or extraordinary talents.",
+         "همه افراد دارای اختلال طیف اوتیسم دارای استعداد خارق‌العاده یا سندرم ساوان نیستند."),
+
+    # ---------- F. Diagnosis & Support ----------
+    Fact(24, "F",
+         "Signs of autism usually appear in early childhood.",
+         "علائم اوتیسم معمولاً در اوایل کودکی ظاهر می‌شوند."),
+    Fact(25, "F",
+         "Autism diagnosis is usually based on behavioral assessment and developmental history.",
+         "تشخیص اوتیسم معمولاً بر اساس ارزیابی رفتاری و تاریخچه رشد انجام می‌شود."),
+    Fact(26, "F",
+         "There is no blood test or definitive medical test for diagnosing autism.",
+         "هیچ آزمایش خون یا تست پزشکی قطعی برای تشخیص اوتیسم وجود ندارد."),
+    Fact(27, "F",
+         "Early diagnosis can help improve life outcomes.",
+         "تشخیص زودهنگام می‌تواند به بهبود نتایج زندگی کمک کند."),
+    Fact(28, "F",
+         "Supportive, educational, speech and occupational therapies can be helpful.",
+         "مداخلات حمایتی، آموزشی، گفتاردرمانی و کاردرمانی می‌توانند مفید باشند."),
+    Fact(29, "F",
+         "The goal of support is to improve quality of life and independence, not to change identity.",
+         "هدف حمایت‌ها افزایش کیفیت زندگی و استقلال فرد است، نه تغییر هویت او."),
+
+    # ---------- G. Autism Knowledge & Awareness ----------
+    Fact(30, "G",
+         "Autism is a neurodevelopmental condition, not a mental illness.",
+         "اوتیسم یک وضعیت عصبی-رشدی است، نه یک بیماری روانی."),
+    Fact(31, "G",
+         "Autism is part of human neurodiversity.",
+         "اوتیسم بخشی از تنوع عصبی (Neurodiversity) انسان محسوب می‌شود."),
+    Fact(32, "G",
+         "Autism is a spectrum and people with autism spectrum disorder can have very different traits and needs.",
+         "اوتیسم یک طیف است و افراد دارای اختلال طیف اوتیسم می‌توانند ویژگی‌ها و نیازهای بسیار متفاوتی داشته باشند."),
+    Fact(33, "G",
+         "Autism can co-occur with other conditions or disabilities, such as low vision or blindness, hearing loss or deafness, cerebral palsy, or intellectual disability.",
+         "اوتیسم می‌تواند همراه با سایر شرایط یا معلولیت‌ها، مانند کم‌بینایی یا نابینایی، کم‌شنوایی یا ناشنوایی، فلج مغزی یا ناتوانی ذهنی، وجود داشته باشد."),
+    Fact(34, "G",
+         "Autism is a lifelong condition.",
+         "اوتیسم یک وضعیت مادام‌العمر است."),
+    Fact(35, "G",
+         "Autism has no specific physical appearance.",
+         "اوتیسم ظاهر فیزیکی مشخصی ندارد."),
+    Fact(36, "G",
+         "The exact cause of autism is not yet fully known.",
+         "علت دقیق اوتیسم هنوز کاملاً مشخص نیست."),
+    Fact(37, "G",
+         "Genetic factors play an important role in autism.",
+         "عوامل ژنتیکی نقش مهمی در بروز اوتیسم دارند."),
+    Fact(38, "G",
+         "Some environmental factors may contribute alongside genetics.",
+         "برخی عوامل محیطی ممکن است در کنار ژنتیک نقش داشته باشند."),
+    Fact(39, "G",
+         "Autism is not caused by parenting style or parents' behavior.",
+         "اوتیسم نتیجه سبک فرزندپروری یا رفتار والدین نیست."),
+    Fact(40, "G",
+         "Autism is diagnosed more often in boys than in girls.",
+         "اوتیسم در پسران بیشتر از دختران تشخیص داده می‌شود."),
+    Fact(41, "G",
+         "Some girls with autism spectrum disorder may be diagnosed less often due to masking.",
+         "برخی دختران دارای اختلال طیف اوتیسم ممکن است به دلیل ماسکینگ کمتر تشخیص داده شوند."),
+    Fact(42, "G",
+         "Autism occurs across all genders, races, countries, social and cultural groups, and socioeconomic levels.",
+         "اوتیسم در همه جنسیت‌ها، نژادها، کشورها، گروه‌های اجتماعی و فرهنگی و سطوح مختلف اجتماعی-اقتصادی دیده می‌شود."),
+    Fact(43, "G",
+         "Vaccines do not cause autism.",
+         "واکسن‌ها باعث اوتیسم نمی‌شوند."),
+    Fact(44, "G",
+         "Respecting neurodiversity and reducing social stigma matters.",
+         "احترام به تفاوت‌های عصبی و کاهش انگ اجتماعی اهمیت دارد."),
+]
+
+
+def get_prototypes(lang: str = "both") -> list[dict]:
+    """برگرداندن prototypeها به‌صورت لیست دیکشنری برای امبدینگ.
+
+    Args:
+        lang: "en" | "fa" | "both"
+            - both: هر فکت دو prototype (EN و FA) می‌سازد (رفتار task اول).
+            - en / fa: فقط همان زبان برای مقایسه‌ی کنترل‌شده‌ی چندمدلی.
+    """
+    lang = (lang or "both").lower().strip()
+    if lang not in {"en", "fa", "both"}:
+        raise ValueError(f"Unsupported fact lang '{lang}'. Use en|fa|both.")
+
+    protos: list[dict] = []
+    for f in FACTS:
+        if lang in ("en", "both"):
+            protos.append(
+                {"fact_id": f.id, "category": f.category, "lang": "en", "text": f.en}
+            )
+        if lang in ("fa", "both"):
+            protos.append(
+                {"fact_id": f.id, "category": f.category, "lang": "fa", "text": f.fa}
+            )
+    return protos
+
+
+def category_titles_bilingual() -> dict[str, str]:
+    return {k: f"{v['key']}. {v['title_en']} — {v['title_fa']}"
+            for k, v in CATEGORIES.items()}
+
+
+# Fail fast on data corruption: validate the inventory on import (cheap, 44 items).
+_FACTS_SUMMARY: dict = validate_facts()
+
+
+if __name__ == "__main__":
+    protos = get_prototypes()
+    print(f"Total facts: {len(FACTS)} | Total prototypes (en+fa): {len(protos)}")
+    for k in CATEGORY_KEYS:
+        n = sum(1 for f in FACTS if f.category == k)
+        print(f"  {k}: {n} facts -> {n*2} prototypes | {CATEGORIES[k]['title_en']}")
