@@ -11,7 +11,7 @@
 | 2 | Data engineering: robust loading, validation, dedup, encodings, language ID, input/response separation, dev/eval leakage guard, privacy logging | ✅ COMPLETE (implemented + tested + executed) |
 | 3 | Semantic labeling engine: model registry, E5 prefixes, disk cache, per-category thresholds, explicit uncertainty, matched-prototype evidence, fact validation | ✅ COMPLETE (implemented + tested; MiniLM verified end-to-end) |
 | 6 (+6b) | Persian translation pipeline + Z.ai (GLM) provider: batching, retries, checkpoints, QA, completeness, quota guard | ✅ IMPLEMENTED + TESTED (mock-verified); **real translation blocked on `ZAI_API_KEY`** |
-| 4 | Model evaluation & comparison | ✅ Run 1 executed on the **full 16,005-record** dataset; Runs 2–3 launched on the same dataset (compute-heavy CPU runs, results land in `outputs/comparison/`); **Runs 4–5 blocked** on the Persian dataset |
+| 4 | Model evaluation & comparison | ✅ **Run 1 executed** on the **full 16,005-record** dataset (results in `outputs/comparison/`). Runs 2–3 (bge-m3 / e5-large × EN × 16,005) **launched and actively computing** on CPU (heavy jobs: bge-m3 pinned to a documented 512-token window); their artifacts land in `outputs/comparison/<run_id>/` automatically on completion, after which `python compare_runs.py --only 1,2,3 --skip-existing` regenerates the unified summary. **Runs 4–5 blocked** on the Persian dataset |
 | 5 | Gap analysis v2 (distribution, confidence, uncertainty, margin, prototype evidence) | ✅ COMPLETE (implemented + tested) |
 | 7 | Streamlit GUI | ✅ COMPLETE + verified in a real browser (screenshots in `gui-test-screenshots/`) |
 | 8 | Integration, testing, optimization | ✅ 185 tests passing; offline CI guards; embedding cache; fresh-venv install verified |
@@ -31,7 +31,7 @@
 | Suite | Result |
 |---|---|
 | Full test suite (`pytest`) | **185 passed** |
-| Fresh isolated venv (pinned requirements) | **installation verified; full suite green** (Phase-0 procedure repeated on the final requirements incl. `openai`) |
+| Fresh isolated venv (final pinned requirements incl. `openai`) | **185 passed in a clean venv** (`pip check` clean) — installation instructions verified |
 | Dependency graph | `pip check` — no broken requirements |
 | GUI | browser-verified: Home, Quick Label (live MiniLM inference → top-1 C 0.4240, multi-label C/B/D/A, decision badge, margin, evidence table), Results (run metadata + metrics) |
 | CI | workflow pinned + `pip check` + offline guards (`HF_HUB_OFFLINE=1` suite green) |
