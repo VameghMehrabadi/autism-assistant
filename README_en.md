@@ -39,12 +39,26 @@ embedding models for reliability.
 
 ## Install
 
+Dependency versions are **pinned** in `requirements.txt` to a mutually
+compatible, tested set (see `reports/PHASE_0_STABILIZATION.md`). Install the
+CPU build of torch first, then the rest:
+
 ```bash
 python -m venv .venv
 .venv\Scripts\activate          # Windows
 # source .venv/bin/activate     # Linux / macOS
-pip install -r requirements.txt
+pip install --index-url https://download.pytorch.org/whl/cpu "torch==2.15.0"
+grep -vE '^\s*torch([=<>]|$)' requirements.txt > /tmp/requirements.notorch.txt   # Windows: findstr /V /C:"torch" requirements.txt > requirements.notorch.txt
+pip install -r /tmp/requirements.notorch.txt
+python -m pip check             # verifies the dependency graph is consistent
 ```
+
+A CUDA build of `torch==2.15.0` from the default PyPI index is drop-in
+compatible for everything else in the stack. Unit tests run fully offline —
+no model downloads and no API keys are required (`pytest`).
+
+Engineering reports live in `reports/` (phase audits, architecture,
+roadmap, dependency verification).
 
 ## Docker
 

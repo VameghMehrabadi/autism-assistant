@@ -40,12 +40,24 @@
 
 ## Install / نصب
 
+نسخه‌ی پکیج‌ها در `requirements.txt` **پین** شده است (مجموعه‌ی سازگار و تست‌شده؛
+جزئیات در `reports/PHASE_0_STABILIZATION.md`). ابتدا torch را از ایندکس CPU نصب کنید:
+
 ```bash
 python -m venv .venv
 .venv\Scripts\activate          # Windows
 # source .venv/bin/activate     # Linux / macOS
-pip install -r requirements.txt
+pip install --index-url https://download.pytorch.org/whl/cpu "torch==2.15.0"
+grep -vE '^\s*torch([=<>]|$)' requirements.txt > /tmp/requirements.notorch.txt   # ویندوز: findstr /V /C:"torch" requirements.txt > requirements.notorch.txt
+pip install -r /tmp/requirements.notorch.txt
+python -m pip check             # بررسی سازگاری گراف وابستگی‌ها
 ```
+
+buildی CUDA از همان نسخه هم سازگار است. تست‌های واحد کاملاً آفلاین اجرا می‌شوند —
+بدون دانلود مدل و بدون نیاز به کلید API (`pytest`).
+
+گزارش‌های مهندسی در پوشه‌ی `reports/` است (آدیت فازها، معماری، نقشه‌ی راه،
+تأیید وابستگی‌ها).
 
 ## Docker
 

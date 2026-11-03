@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   test:
@@ -19,13 +20,22 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install dependencies
+      - name: Install pinned CPU torch first
         run: |
           python -m pip install --upgrade pip
-          pip install --index-url https://download.pytorch.org/whl/cpu torch
+          pip install --index-url https://download.pytorch.org/whl/cpu "torch==2.15.0"
+
+      - name: Install pinned dependencies (torch excluded)
+        run: |
           grep -vE '^[[:space:]]*torch([=<>]|$)' requirements.txt > /tmp/requirements.notorch.txt
           pip install -r /tmp/requirements.notorch.txt
 
-      - name: Run tests
+      - name: Verify dependency graph consistency
+        run: python -m pip check
+
+      - name: Run tests (offline: no model downloads, no secrets)
+        env:
+          HF_HUB_OFFLINE: "1"   # fail fast if a test ever tries to reach Hugging Face
+          TRANSFORMERS_OFFLINE: "1"
         run: |
           python -m pytest

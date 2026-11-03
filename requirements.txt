@@ -1,11 +1,22 @@
-﻿datasets>=2.18.0
-huggingface-hub>=0.23.0
-sentence-transformers>=2.7.0
-torch>=2.2.0
-numpy>=1.26.0
-tqdm>=4.66.0
-matplotlib>=3.8.0
-pandas>=2.2.0
-pytest>=8.0.0
-streamlit>=1.30.0
+# Pinned, mutually compatible set (verified working on Python 3.13 / Windows,
+# CPU torch build; see reports/PHASE_0_STABILIZATION.md for the verification
+# evidence). Bump only as a whole graph, never a single package, and re-run
+# the test suite afterwards.
+#
+# torch: install from the CPU wheel index for reproducible CPU environments:
+#   pip install --index-url https://download.pytorch.org/whl/cpu "torch==2.15.0"
+# A CUDA build of the same version is drop-in compatible for the rest of the
+# stack. This file intentionally keeps `torch==2.15.0` so CI/Docker can grep
+# it out and install the CPU build first (see .github/workflows, Dockerfile).
+datasets==2.19.0
+huggingface-hub==0.36.2
+sentence-transformers==2.7.0
+transformers==4.49.0
+torch==2.15.0
+numpy==2.5.4
+tqdm==4.70.1
+matplotlib==3.11.2
+pandas==3.1.0
+pytest==9.2.0
+streamlit==1.66.1
 # optional: openai>=1.40.0   # only for translate_dataset.py
