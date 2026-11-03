@@ -13,7 +13,7 @@ embedding models for reliability.
 |---|---|
 | Data engineering (validation, dedup, encodings, leakage guard, privacy logging) | ✅ implemented + tested (16,005 valid unique records exported) |
 | Semantic labeling engine (E5 prefixes, disk cache, per-category thresholds, explicit uncertainty, matched-prototype evidence) | ✅ implemented + tested; MiniLM verified end-to-end on the full 16,005-record dataset |
-| Model comparison | ✅ Run 1 (MiniLM × EN × 16,005) executed — see `outputs/comparison/`; e5-large run executed; runs 4–5 blocked on the Persian dataset |
+| Model comparison | ✅ Run 1 (MiniLM × EN × 16,005) executed — see `outputs/comparison/`; Runs 2–3 (bge-m3 / e5-large × EN) launched on the same full dataset; runs 4–5 blocked on the Persian dataset |
 | Gap analysis (distribution, uncertainty, margin, prototype evidence) | ✅ implemented + tested |
 | Persian translation pipeline | ✅ implemented + tested (mock runs); **real translation blocked on `ZAI_API_KEY`** |
 | Z.ai (GLM) provider integration | ✅ implemented + verified (offline + local live path); awaiting credentials |

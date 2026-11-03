@@ -188,10 +188,12 @@ EMBED_CACHE_ENABLED: bool = True
 EMBED_CACHE_DIR: Path = CACHE_DIR / "embed_cache"
 # حداکثر توکن ورودی برای هر مدل؛ None = پیش‌فرض خود مدل (رفتار قبلی).
 # Per-model max input tokens; None = the model's own default (previous behavior).
+# bge-m3 pinned to 512 for the comparison matrix: comparable with e5-large's
+# window and ~16× faster on CPU than its native 8192-token window.
 EMBED_MAX_SEQ_TOKENS: dict[str, int | None] = {
-    "minilm": None,
-    "bge-m3": None,
-    "e5-large": None,
+    "minilm": None,      # model default (128)
+    "bge-m3": 512,
+    "e5-large": None,    # model default (512)
 }
 # آستانه‌ی اختصاصی هر دسته (اختیاری). دسته‌ی غایب = LABEL_THRESHOLD.
 # Optional per-category threshold overrides; missing category = LABEL_THRESHOLD.

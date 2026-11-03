@@ -11,7 +11,7 @@
 | 2 | Data engineering: robust loading, validation, dedup, encodings, language ID, input/response separation, dev/eval leakage guard, privacy logging | ✅ COMPLETE (implemented + tested + executed) |
 | 3 | Semantic labeling engine: model registry, E5 prefixes, disk cache, per-category thresholds, explicit uncertainty, matched-prototype evidence, fact validation | ✅ COMPLETE (implemented + tested; MiniLM verified end-to-end) |
 | 6 (+6b) | Persian translation pipeline + Z.ai (GLM) provider: batching, retries, checkpoints, QA, completeness, quota guard | ✅ IMPLEMENTED + TESTED (mock-verified); **real translation blocked on `ZAI_API_KEY`** |
-| 4 | Model evaluation & comparison | ✅ Runs 1 & 3 executed on the **full 16,005-record** dataset; Run 2 launched; **Runs 4–5 blocked** on the Persian dataset |
+| 4 | Model evaluation & comparison | ✅ Run 1 executed on the **full 16,005-record** dataset; Runs 2–3 launched on the same dataset (compute-heavy CPU runs, results land in `outputs/comparison/`); **Runs 4–5 blocked** on the Persian dataset |
 | 5 | Gap analysis v2 (distribution, confidence, uncertainty, margin, prototype evidence) | ✅ COMPLETE (implemented + tested) |
 | 7 | Streamlit GUI | ✅ COMPLETE + verified in a real browser (screenshots in `gui-test-screenshots/`) |
 | 8 | Integration, testing, optimization | ✅ 185 tests passing; offline CI guards; embedding cache; fresh-venv install verified |
