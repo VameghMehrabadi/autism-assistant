@@ -7,6 +7,23 @@ This repository implements the data preparation stage: loading **MentalChat16K**
 semantically labeling samples against 7 autism fact categories (A–G), running **gap analysis**, and comparing
 embedding models for reliability.
 
+## Project status (final release)
+
+| Area | Status |
+|---|---|
+| Data engineering (validation, dedup, encodings, leakage guard, privacy logging) | ✅ implemented + tested (16,005 valid unique records exported) |
+| Semantic labeling engine (E5 prefixes, disk cache, per-category thresholds, explicit uncertainty, matched-prototype evidence) | ✅ implemented + tested; MiniLM verified end-to-end on the full 16,005-record dataset |
+| Model comparison | ✅ Run 1 (MiniLM × EN × 16,005) executed — see `outputs/comparison/`; e5-large run executed; runs 4–5 blocked on the Persian dataset |
+| Gap analysis (distribution, uncertainty, margin, prototype evidence) | ✅ implemented + tested |
+| Persian translation pipeline | ✅ implemented + tested (mock runs); **real translation blocked on `ZAI_API_KEY`** |
+| Z.ai (GLM) provider integration | ✅ implemented + verified (offline + local live path); awaiting credentials |
+| Streamlit GUI | ✅ implemented + verified in a real browser (labeling, results, evidence tables) |
+| Tests | ✅ 174 passing (`pytest`); CI workflow in place |
+| Docker image | ⚠️ Dockerfile/compose ready and pinned; build not exercised (no Docker daemon in the dev environment) |
+
+Details: `reports/` (phase reports, final report, cost analysis), `DEVELOPMENT_LOG.md`.
+
+
 ## Pipeline
 
 1. `data_loader.py` — Load English `ShenLab/MentalChat16K` or a local Persian JSONL/CSV.

@@ -21,8 +21,11 @@ import numpy as np
 import pandas as pd
 
 import config
-from facts import CATEGORIES, CATEGORY_KEYS
+from facts import CATEGORIES, CATEGORY_KEYS, FACTS
 from labeler import parse_labels
+
+# fact_id → category, for mapping matched prototype identifiers to categories
+_FACT_CATEGORY: dict[int, str] = {f.id: f.category for f in FACTS}
 
 
 def _category_label(cat: str) -> str:
@@ -86,6 +89,36 @@ def build_report(df: pd.DataFrame, scores: np.ndarray,
         cat: per_cat[cat]["global_mean_score"] for cat in cat_keys
     }
 
+    # --- Phase-3 signals: explicit uncertainty + prototype evidence -------
+    # Old labeled.csv files may lack these columns; every addition is
+    # optional and None when the data is absent.
+    n_uncertain: int | None = None
+    uncertain_rate: float | None = None
+    margin_stats: dict[str, float] | None = None
+    if "decision" in df.columns:
+        decisions = df["decision"].astype(str)
+        n_uncertain = int((decisions == "uncertain").sum())
+        uncertain_rate = round(n_uncertain / n, 4) if n else 0.0
+    if "margin" in df.columns:
+        margins = pd.to_numeric(df["margin"], errors="coerce").dropna()
+        if len(margins):
+            margin_stats = {
+                "mean": round(float(margins.mean()), 4),
+                "median": round(float(margins.median()), 4),
+                "min": round(float(margins.min()), 4),
+            }
+    matched_counts: dict[str, int] = {c: 0 for c in cat_keys}
+    if "matched_fact_ids" in df.columns:
+        for raw in df["matched_fact_ids"]:
+            if not isinstance(raw, str) or not raw.strip():
+                continue  # NaN / empty cells
+            for part in raw.split(";"):
+                fact_id = part.strip().split(":")[0]  # entries look like "12:fa"
+                if fact_id.isdigit() and int(fact_id) in _FACT_CATEGORY:
+                    matched_counts[_FACT_CATEGORY[int(fact_id)]] += 1
+    for c in cat_keys:
+        per_cat[c]["matched_count"] = matched_counts[c]
+
     # رتبه‌بندی ضعیف→قوی: top-1، سپس پوشش multi-label، سپس شباهت سراسری
     ranking = sorted(
         cat_keys,
@@ -110,6 +143,9 @@ def build_report(df: pd.DataFrame, scores: np.ndarray,
         "ranking_weak_to_strong": ranking,
         "weakest": ranking[:2],
         "strongest": ranking[-2:],
+        "n_uncertain": n_uncertain,
+        "uncertain_rate": uncertain_rate,
+        "margin_stats": margin_stats,
     }
     return report
 
@@ -166,9 +202,33 @@ def render_markdown(report: dict) -> str:
         "",
         " → ".join(report["ranking_weak_to_strong"]),
         "",
-        "## Weakest categories & recommendations",
+        "## Uncertainty & prototype evidence",
         "",
     ]
+    if report.get("n_uncertain") is not None:
+        lines.append(
+            f"- Explicit uncertain decisions: **{report['n_uncertain']}** "
+            f"({(report.get('uncertain_rate') or 0):.1%} of samples)"
+        )
+    if report.get("margin_stats"):
+        ms = report["margin_stats"]
+        lines.append(
+            f"- Top-1 vs top-2 similarity margin — mean **{ms['mean']}**, "
+            f"median **{ms['median']}**, min **{ms['min']}** "
+            "(cosine units, an ambiguity heuristic — not a calibrated confidence)"
+        )
+    matched_total = sum(pc[c].get("matched_count", 0) for c in CATEGORY_KEYS)
+    if matched_total:
+        lines.append(
+            "- Matched-prototype evidence per category "
+            "(accepted labels + diagnostic top-1):"
+        )
+        for c in CATEGORY_KEYS:
+            lines.append(f"  - {c}. {pc[c]['title']}: {pc[c].get('matched_count', 0)}")
+    if report.get("n_uncertain") is None and not matched_total:
+        lines.append(
+            "- (labeled.csv predates the Phase-3 result schema — no signal columns)"
+        )
     lines += _recommendations(report)
     lines += [
         "",

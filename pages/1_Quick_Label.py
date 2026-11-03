@@ -59,8 +59,8 @@ if st.button("Analyze", type="primary"):
     else:
         with st.spinner("Embedding & scoring…"):
             emb = labeler.embed_samples([text])
-            scores = labeler.score_samples(emb)
-            result = labeler.assign_labels(scores)[0]
+            scores, matches = labeler.score_samples(emb, return_matches=True)
+            result = labeler.assign_labels(scores, prototype_indices=matches)[0]
         render_label_result(result)
         if sample_meta is not None:
             with st.expander("Sample metadata"):

@@ -36,7 +36,7 @@ def _reconfigure_stdio_utf8() -> None:
 _reconfigure_stdio_utf8()
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Semantic labeling + gap analysis.")
     p.add_argument(
         "--limit",
@@ -83,7 +83,27 @@ def parse_args() -> argparse.Namespace:
         choices=["patient", "all"],
         help="patient = فقط شرح مراجع؛ all = instruction+input+output",
     )
-    return p.parse_args()
+    p.add_argument(
+        "--sampling",
+        type=str,
+        default=None,
+        choices=["first", "random"],
+        help="نمونه‌گیری: first (پیش‌فرض) یا random (با seed تکرارپذیر)",
+    )
+    p.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="seed نمونه‌گیری تصادفی (پیش‌فرض: config.SAMPLING_SEED)",
+    )
+    p.add_argument(
+        "--split",
+        type=str,
+        default=None,
+        choices=["dev", "eval"],
+        help="فیلتر بر اساس manifest جداسازی dev/eval (جلوگیری از نشت داده)",
+    )
+    return p.parse_args(argv)
 
 
 def run_pipeline(
@@ -95,14 +115,16 @@ def run_pipeline(
     output_dir: str | Path | None = None,
     run_meta: dict | None = None,
     text_mode: str | None = None,
+    sampling: str | None = None,
+    seed: int | None = None,
+    split: str | None = None,
 ) -> dict:
     """اجرای یک پیکربندی کامل؛ گزارش gap analysis را برمی‌گرداند."""
     if limit is None:
         limit = config.SAMPLE_LIMIT
     if limit is not None and limit <= 0:
         limit = None
-    if text_mode:
-        config.LABEL_TEXT_MODE = text_mode
+    effective_mode = (text_mode or config.LABEL_TEXT_MODE).lower().strip()
 
     out_dir = Path(output_dir) if output_dir else config.OUTPUT_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -119,13 +141,24 @@ def run_pipeline(
         "dataset": dataset,
         "dataset_path": str(dataset_path) if dataset_path else None,
         "limit": limit,
-        "label_text_mode": config.LABEL_TEXT_MODE,
+        "label_text_mode": effective_mode,
         "labeler_version": LABELER_VERSION,
+        "sampling": sampling or config.SAMPLING_STRATEGY,
+        "seed": seed if seed is not None else config.SAMPLING_SEED,
+        "split": split,
         **(run_meta or {}),
     }
 
-    # 1) بارگذاری داده
-    samples = load_samples(limit=limit, dataset=dataset, path=dataset_path)
+    # 1) بارگذاری داده (حالت متن به‌صورت صریح پاس داده می‌شود — بدون جهش глобال)
+    samples = load_samples(
+        limit=limit,
+        dataset=dataset,
+        path=dataset_path,
+        text_mode=effective_mode,
+        sampling=sampling,
+        seed=seed,
+        split=split,
+    )
     if not samples:
         raise RuntimeError("No samples loaded.")
 
@@ -202,6 +235,9 @@ def main() -> int:
             dataset_path=args.dataset_path,
             output_dir=args.out,
             text_mode=args.text_mode,
+            sampling=args.sampling,
+            seed=args.seed,
+            split=args.split,
         )
     except FileNotFoundError as e:
         print(f"[main] ERROR: {e}", file=sys.stderr)

@@ -17,18 +17,63 @@ def build_score_table(score_vector: dict[str, float]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def decision_badge(result: dict) -> str:
+    """Human-readable decision with legacy-result fallback."""
+    decision = result.get("decision")
+    if decision is None:
+        decision = "labeled" if result.get("confident") else "uncertain"
+    return str(decision)
+
+
+def matched_prototypes_table(result: dict) -> pd.DataFrame | None:
+    """Prototype evidence rows for the matched prototypes of one result."""
+    matched = result.get("matched_prototypes") or []
+    if not matched:
+        return None
+    rows = [
+        {
+            "Category": m.get("category", ""),
+            "Title": CATEGORIES.get(m.get("category", ""), {}).get("title_en", ""),
+            "Fact ID": m.get("fact_id", ""),
+            "Language": m.get("lang", ""),
+            "Similarity": round(float(m.get("score", 0.0)), 4),
+        }
+        for m in matched
+    ]
+    return pd.DataFrame(rows)
+
+
 def render_label_result(result: dict) -> None:
     top_label = result["top_label"]
     title = CATEGORIES.get(top_label, {}).get("title_en", top_label)
+    decision = decision_badge(result)
     left, right = st.columns([2, 3])
     with left:
         st.metric("Top category", f"{top_label} — {title}", delta=f"{result['top_score']:.4f}")
+        if decision == "uncertain":
+            st.warning(
+                "⚠️ Uncertain — below threshold. No label is accepted; "
+                "the top category is diagnostic only."
+            )
+        else:
+            st.success("✅ Labeled")
         accepted = ", ".join(result["labels"]) or "none (below threshold)"
         st.markdown("**Labels:** " + accepted)
-        st.write("✅ Confident" if result["confident"] else "⚠️ Below confidence threshold")
+        if result.get("margin") is not None:
+            st.caption(
+                f"Margin vs runner-up: {result['margin']:.4f} — an ambiguity "
+                "heuristic, not calibrated confidence."
+            )
+        st.caption(
+            "Scores are cosine similarities in [-1, 1] — not probabilities."
+        )
     with right:
         score_df = build_score_table(result["score_vector"])
         st.bar_chart(score_df.set_index("Category")["Score"])
+    matched_df = matched_prototypes_table(result)
+    if matched_df is not None:
+        st.markdown("**Matched prototypes (evidence):**")
+        st.dataframe(matched_df, use_container_width=True, hide_index=True)
     st.dataframe(score_df, use_container_width=True, hide_index=True)
 
 

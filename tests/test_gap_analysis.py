@@ -47,3 +47,60 @@ def test_empty_multi_labels_are_not_counted_as_top_label():
     report = build_report(df, scores, threshold=0.35)
     assert report["per_category"]["F"]["count"] == 2
     assert report["per_category"]["F"]["multi_count"] == 0
+
+
+# --------------------------------------------------------------------------
+# Phase-3 signals: uncertainty, margin, matched-prototype evidence
+# --------------------------------------------------------------------------
+
+
+def _df_with_phase3_signals() -> pd.DataFrame:
+    n_cats = len(CATEGORY_KEYS)
+    scores = np.full((3, n_cats), 0.5, dtype=float)
+    return pd.DataFrame({
+        "top_label": ["B", "B", "F"],
+        "top_score": [0.61, 0.55, 0.70],
+        "labels": ["B", "B", "F"],
+        "decision": ["labeled", "labeled", "uncertain"],
+        "margin": [0.11, 0.05, 0.02],
+        "matched_fact_ids": ["8:en", "8:fa", "33:fa"],
+    }), scores
+
+
+def test_gap_report_uncertainty_margin_and_matched_evidence():
+    df, scores = _df_with_phase3_signals()
+    report = build_report(df, scores, threshold=0.35)
+    assert report["n_uncertain"] == 1
+    assert report["uncertain_rate"] == round(1 / 3, 4)
+    assert report["margin_stats"]["mean"] == round((0.11 + 0.05 + 0.02) / 3, 4)
+    assert report["margin_stats"]["min"] == 0.02
+    # fact 8 → category B (twice), fact 33 → category G
+    assert report["per_category"]["B"]["matched_count"] == 2
+    assert report["per_category"]["G"]["matched_count"] == 1
+    assert report["per_category"]["A"]["matched_count"] == 0
+
+
+def test_gap_report_old_format_has_no_phase3_signals():
+    n_cats = len(CATEGORY_KEYS)
+    scores = np.full((2, n_cats), 0.5, dtype=float)
+    df = pd.DataFrame({
+        "top_label": ["F", "F"],
+        "top_score": [0.6, 0.6],
+        "labels": ["F", "F"],
+    })
+    report = build_report(df, scores, threshold=0.35)
+    assert report["n_uncertain"] is None
+    assert report["uncertain_rate"] is None
+    assert report["margin_stats"] is None
+    assert all(report["per_category"][c]["matched_count"] == 0 for c in CATEGORY_KEYS)
+
+
+def test_gap_report_markdown_renders_uncertainty_section():
+    from gap_analysis import render_markdown
+
+    df, scores = _df_with_phase3_signals()
+    report = build_report(df, scores, threshold=0.35)
+    md = render_markdown(report)
+    assert "## Uncertainty & prototype evidence" in md
+    assert "Explicit uncertain decisions: **1**" in md
+    assert "Matched-prototype evidence per category" in md

@@ -451,6 +451,7 @@ def load_samples_en(
     sampling: str | None = None,
     seed: int | None = None,
     language_filter: str | None = None,
+    text_mode: str | None = None,
     return_report: bool = False,
 ) -> list[Sample] | tuple[list[Sample], LoadReport]:
     """بارگذاری MentalChat16K انگلیسی از Hugging Face."""
@@ -475,7 +476,7 @@ def load_samples_en(
     fields = tuple(f for f in config.DATASET_TEXT_FIELDS if f in cols)
     if not fields:
         fields = tuple(c for c in cols if ds.features[c].dtype == "string")
-    mode = config.LABEL_TEXT_MODE
+    mode = (text_mode or config.LABEL_TEXT_MODE).lower().strip()
     print(f"[data_loader] Using text fields: {fields} | mode={mode}")
 
     # Fetch only what the strategy needs (first-N keeps the old behaviour).
@@ -511,6 +512,7 @@ def load_samples_fa(
     sampling: str | None = None,
     seed: int | None = None,
     language_filter: str | None = None,
+    text_mode: str | None = None,
     return_report: bool = False,
 ) -> list[Sample] | tuple[list[Sample], LoadReport]:
     """بارگذاری دیتاست فارسی از JSONL/CSV/TSV/JSON با اعتبارسنجی کامل.
@@ -537,7 +539,7 @@ def load_samples_fa(
     samples, report = _build_samples(
         rows,
         fields=config.DATASET_TEXT_FIELDS,
-        mode=config.LABEL_TEXT_MODE,
+        mode=(text_mode or config.LABEL_TEXT_MODE).lower().strip(),
         source="fa",
         path=str(fa_path),
         load_stats=load_stats,
@@ -565,6 +567,7 @@ def load_samples(
     sampling: str | None = None,
     seed: int | None = None,
     language_filter: str | None = None,
+    text_mode: str | None = None,
     return_report: bool = False,
 ) -> list[Sample] | tuple[list[Sample], LoadReport]:
     """بارگذاری نمونه‌ها با پشتیبانی dev/eval split.
@@ -586,38 +589,36 @@ def load_samples(
     ds = (dataset or "en").strip()
     # مسیر فایل به‌عنوان dataset
     maybe_path = Path(ds)
+    pass_through = {
+        "dedup": dedup,
+        "sampling": sampling,
+        "seed": seed,
+        "language_filter": language_filter,
+        "text_mode": text_mode,
+    }
     if path is not None or maybe_path.suffix.lower() in {
         ".jsonl", ".csv", ".tsv", ".json"
     } or maybe_path.exists():
         result = load_samples_fa(
             path=path or ds,
             limit=limit,
-            dedup=dedup,
-            sampling=sampling,
-            seed=seed,
-            language_filter=language_filter,
             return_report=True,
+            **pass_through,
         )
     else:
         key = ds.lower()
         if key in {"en", "english"}:
             result = load_samples_en(
                 limit=limit,
-                dedup=dedup,
-                sampling=sampling,
-                seed=seed,
-                language_filter=language_filter,
                 return_report=True,
+                **pass_through,
             )
         elif key in {"fa", "persian", "farsi"}:
             result = load_samples_fa(
                 path=path,
                 limit=limit,
-                dedup=dedup,
-                sampling=sampling,
-                seed=seed,
-                language_filter=language_filter,
                 return_report=True,
+                **pass_through,
             )
         else:
             raise ValueError(

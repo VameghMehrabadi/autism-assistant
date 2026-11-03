@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import config
 import main
 from facts import CATEGORY_KEYS
 from labeler import LABELER_VERSION, SemanticLabeler
@@ -138,3 +139,68 @@ def test_run_pipeline_no_samples_raises(tmp_path, offline_labeler):
             dataset_path=str(empty_jsonl),
             output_dir=tmp_path / "out",
         )
+
+
+# --------------------------------------------------------------------------
+# CLI completion (Phase-3b): explicit text-mode threading + new flags
+# --------------------------------------------------------------------------
+
+
+def test_run_pipeline_text_mode_no_global_mutation(tmp_path, offline_labeler, monkeypatch):
+    """text_mode must be threaded explicitly, not by mutating global config."""
+    monkeypatch.setattr(config, "LABEL_TEXT_MODE", "patient", raising=False)
+    main.run_pipeline(
+        limit=3,
+        model_key="minilm",
+        fact_lang="fa",
+        dataset="fa",
+        dataset_path=str(FIXTURE),
+        output_dir=tmp_path,
+        text_mode="all",
+    )
+    assert config.LABEL_TEXT_MODE == "patient"  # global config untouched
+    meta = json.loads((tmp_path / "run_meta.json").read_text(encoding="utf-8"))
+    assert meta["label_text_mode"] == "all"
+    labeled = pd.read_csv(tmp_path / "labeled.csv")
+    # 'all' mode merges instruction+input+output into the label text
+    assert labeled["text"].str.contains("instruction:", regex=False).all()
+
+
+def test_run_pipeline_default_mode_unchanged(tmp_path, offline_labeler):
+    main.run_pipeline(
+        limit=3,
+        model_key="minilm",
+        fact_lang="fa",
+        dataset="fa",
+        dataset_path=str(FIXTURE),
+        output_dir=tmp_path,
+    )
+    meta = json.loads((tmp_path / "run_meta.json").read_text(encoding="utf-8"))
+    assert meta["label_text_mode"] == config.LABEL_TEXT_MODE
+
+
+def test_parse_args_new_flags():
+    args = main.parse_args([
+        "--sampling", "random", "--seed", "7", "--split", "dev",
+    ])
+    assert args.sampling == "random"
+    assert args.seed == 7
+    assert args.split == "dev"
+    defaults = main.parse_args([])
+    assert defaults.sampling is None and defaults.seed is None and defaults.split is None
+
+
+def test_run_pipeline_meta_records_sampling_and_split(tmp_path, offline_labeler):
+    main.run_pipeline(
+        limit=4,
+        model_key="minilm",
+        fact_lang="fa",
+        dataset="fa",
+        dataset_path=str(FIXTURE),
+        output_dir=tmp_path,
+        sampling="first",
+        seed=99,
+    )
+    meta = json.loads((tmp_path / "run_meta.json").read_text(encoding="utf-8"))
+    assert meta["sampling"] == "first"
+    assert meta["seed"] == 99
