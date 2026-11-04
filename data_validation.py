@@ -74,6 +74,18 @@ def detect_encoding(path: str | Path, sample_size: int = 65536) -> str:
     single-byte fallbacks, cp1256 is chosen when the decoded sample contains
     Arabic-script characters (typical for legacy Persian CSV exports),
     otherwise cp1252. latin-1 always succeeds, so a value is always returned.
+
+    Boundary rule: a byte sample truncated mid-file may end inside a valid
+    UTF-8 multibyte sequence (Persian characters are 2 bytes in UTF-8). The
+    resulting strict-decode failure would misdetect large valid UTF-8 files
+    as CP1256 and silently mojibake every Persian character. Therefore, when
+    the *first* decode error starts within the last 3 bytes of the sample
+    (the longest UTF-8 sequence is 4 bytes), the file is treated as UTF-8 —
+    the incomplete tail is a sampling artifact, not file corruption. A
+    genuinely non-UTF-8 file (e.g. CP1256) fails decoding at its first
+    high byte, far earlier in the sample, so legitimate CP1256 detection is
+    unaffected. Worst case for a pathological file: a loud read-time
+    UnicodeDecodeError instead of silent corruption.
     """
     with Path(path).open("rb") as handle:
         raw = handle.read(sample_size)
@@ -86,8 +98,11 @@ def detect_encoding(path: str | Path, sample_size: int = 65536) -> str:
     try:
         raw.decode("utf-8")
         return "utf-8"
-    except UnicodeDecodeError:
-        pass
+    except UnicodeDecodeError as exc:
+        if exc.start >= len(raw) - 3 and len(raw) == sample_size:
+            # Sample truncated mid-multibyte-sequence: the file itself is
+            # (with overwhelming likelihood) valid UTF-8.
+            return "utf-8"
     for enc in _BYTE_ENCODINGS:
         decoded = raw.decode(enc, errors="replace")
         if _has_arabic_script(decoded):

@@ -8,7 +8,6 @@ import pytest
 
 import data_validation as dv
 
-
 # --------------------------------------------------------------------------
 # Encoding detection
 # --------------------------------------------------------------------------
@@ -32,6 +31,62 @@ def test_detect_encoding_cp1256_fallback(tmp_path: Path):
     payload = "instruction,input,output\nاضطراب,برنامه,پاسخ\n"
     path.write_bytes(payload.encode("cp1256"))
     assert dv.detect_encoding(path) == "cp1256"
+
+
+# --------------------------------------------------------------------------
+# Phase-1 regression: UTF-8 samples truncated mid-multibyte-character
+# --------------------------------------------------------------------------
+
+
+def _persian_record_bytes(i: int) -> bytes:
+    record = {
+        "idx": i,
+        "instruction": "برنامه‌ی روزانه‌ام که عوض می‌شود مضطرب می‌شوم.",
+        "input": "",
+        "output": "ساختار و پیش‌بینی‌پذیری معمولاً کمک‌کننده است.",
+    }
+    return json.dumps(record, ensure_ascii=False).encode("utf-8") + b"\n"
+
+
+def test_detect_encoding_utf8_sample_ends_mid_multibyte_char(tmp_path: Path):
+    """A large valid UTF-8 Persian JSONL whose 65,536-byte sample ends after
+    the lead byte of a 2-byte Persian character must be detected as UTF-8,
+    not CP1256 (the original bug: silent mojibake of the whole file)."""
+    path = tmp_path / "large_fa.jsonl"
+    ascii_prefix = b'{"idx": 0, "instruction": "' + b"x" * (65535 - 27)
+    assert len(ascii_prefix) == 65535
+    payload = ascii_prefix + "ا".encode("utf-8") + _persian_record_bytes(1) * 400
+    assert len(payload) > 65536
+    path.write_bytes(payload)
+    assert dv.detect_encoding(path) == "utf-8"
+
+
+def test_detect_encoding_utf8_boundary_cut_positions(tmp_path: Path):
+    """Regression for both cut offsets of a 2-byte char and a 3-byte char
+    (ZWNJ, common in real Persian text such as 'می‌شود')."""
+    prefix = b'{"a": "' + b"x" * (65535 - 8)
+    for trailing_char in ("ا", "‌"):  # 2-byte U+0627, 3-byte U+200C
+        path = tmp_path / f"cut_{len(trailing_char.encode('utf-8'))}.jsonl"
+        path.write_bytes(prefix + trailing_char.encode("utf-8") + b"rest\"\n")
+        assert dv.detect_encoding(path) == "utf-8", trailing_char
+
+
+def test_detect_encoding_small_corrupt_file_not_rescued(tmp_path: Path):
+    """A file smaller than the sample whose final bytes are a genuinely
+    incomplete UTF-8 sequence is corrupt — it must not be labelled UTF-8."""
+    path = tmp_path / "small_corrupt.jsonl"
+    path.write_bytes(b'{"a": 1}\n{"b": "\xd8')  # lone lead byte at true EOF
+    assert dv.detect_encoding(path) != "utf-8"
+
+
+def test_detect_encoding_large_clean_boundary_still_utf8(tmp_path: Path):
+    """Control: a large UTF-8 file whose sample ends exactly on a complete
+    character continues to be detected as UTF-8."""
+    path = tmp_path / "clean.jsonl"
+    payload = b"".join(_persian_record_bytes(i) for i in range(800))
+    assert len(payload) > 65536
+    path.write_bytes(payload)
+    assert dv.detect_encoding(path) == "utf-8"
 
 
 def test_detect_encoding_utf16_bom(tmp_path: Path):

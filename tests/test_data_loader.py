@@ -340,3 +340,43 @@ def test_split_rejects_unknown_split_name():
     )
     with pytest.raises(ValueError):
         load_samples(dataset="fa", path=path, split="train")
+
+
+# --------------------------------------------------------------------------
+# Phase-1 regression: large UTF-8 Persian JSONL loads without mojibake
+# --------------------------------------------------------------------------
+
+
+def test_load_samples_fa_large_utf8_boundary_file(tmp_path: Path):
+    """End-to-end: a large valid UTF-8 Persian JSONL whose 65,536-byte sample
+    ends mid-multibyte-character must load as UTF-8 with text intact — the
+    original bug detected such files as CP1256 and silently mojibaked every
+    Persian character."""
+    path = tmp_path / "large_fa.jsonl"
+    records = [
+        {
+            "idx": i,
+            "text": (
+                f"instruction: برنامه‌ی شماره {i} عوض می‌شود مضطرب.\n"
+                "input: \n"
+                f"output: پاسخ درمانی {i}."
+            ),
+        }
+        for i in range(800)
+    ]
+    payload = b"".join(
+        json.dumps(r, ensure_ascii=False).encode("utf-8") + b"\n" for r in records
+    )
+    assert len(payload) > 65536
+    path.write_bytes(payload)
+
+    samples, report = load_samples_fa(path=path, return_report=True)
+    assert report.encoding == "utf-8"
+    assert report.kept == 800
+    # Text integrity: the exact source Persian string survives the roundtrip.
+    expected = "برنامه‌ی شماره 5 عوض می‌شود مضطرب."
+    assert samples[5].text == expected
+    # No mojibake signatures anywhere in the loaded labels.
+    joined = " ".join(s.text for s in samples)
+    assert "Ø" not in joined and "\ufffd" not in joined
+    assert all(s.meta["lang"] == "fa" for s in samples)
