@@ -11,7 +11,7 @@
 | 2 | Data engineering: robust loading, validation, dedup, encodings, language ID, input/response separation, dev/eval leakage guard, privacy logging | ✅ COMPLETE (implemented + tested + executed) |
 | 3 | Semantic labeling engine: model registry, E5 prefixes, disk cache, per-category thresholds, explicit uncertainty, matched-prototype evidence, fact validation | ✅ COMPLETE (implemented + tested; MiniLM verified end-to-end) |
 | 6 (+6b) | Persian translation pipeline + Z.ai (GLM) provider: batching, retries, checkpoints, QA, completeness, quota guard | ✅ IMPLEMENTED + TESTED (mock-verified); **real translation blocked on `ZAI_API_KEY`** |
-| 4 | Model evaluation & comparison | ✅ **Run 1 executed** on the **full 16,005-record** dataset (results in `outputs/comparison/`). Runs 2–3 (bge-m3 / e5-large × EN × 16,005) **launched and actively computing** on CPU (heavy jobs: bge-m3 pinned to a documented 512-token window); their artifacts land in `outputs/comparison/<run_id>/` automatically on completion, after which `python compare_runs.py --only 1,2,3 --skip-existing` regenerates the unified summary. **Runs 4–5 blocked** on the Persian dataset |
+| 4 | Model evaluation & comparison | ✅ **Runs 1, 2, 3 all executed** on the **full 16,005-record** dataset (MiniLM / bge-m3 / e5-large × English MentalChat16K; bge-m3 pinned to a documented 512-token window). Unified summary: `outputs/comparison/comparison_summary.{csv,json}` + `comparison_report.md` + chart. Key finding: the three models differ materially at the same 0.35 threshold — confident rates 84.4% / 100% / 100%, and e5-large's cosine scores concentrate near 0.80, empirically confirming that raw similarity thresholds are **not calibrated confidence** and require per-model calibration. **Runs 4–5 blocked** on the Persian dataset |
 | 5 | Gap analysis v2 (distribution, confidence, uncertainty, margin, prototype evidence) | ✅ COMPLETE (implemented + tested) |
 | 7 | Streamlit GUI | ✅ COMPLETE + verified in a real browser (screenshots in `gui-test-screenshots/`) |
 | 8 | Integration, testing, optimization | ✅ 185 tests passing; offline CI guards; embedding cache; fresh-venv install verified |
@@ -83,6 +83,20 @@ streamlit run ui.py            # or launch_ui.bat / launch_ui.ps1 / docker compo
 ```
 
 Model comparison results: `outputs/comparison/comparison_report.md` + `comparison_summary.{csv,json}` + per-run folders.
+
+### Comparison results (all runs: Persian facts × English MentalChat16K × 16,005 records)
+
+| Run | Model | Confident | Explicitly uncertain | Top-1 distribution | Weak → Strong |
+|---|---|---|---|---|---|
+| 1 | MiniLM | 84.4% | 15.6% | C 33.0% · F 26.1% · B 23.8% · A 10.2% | D > E > G > A > B > F > C |
+| 2 | bge-m3 (512-token window) | 100.0% | 0.01% | B 43.4% · C 19.0% · A 13.9% · F 14.2% | E > D > G > A > F > C > B |
+| 3 | e5-large | 100.0% | 0.0% | F 31.3% · G 30.6% · C 25.9% · D 10.2% | A > E > B > D > C > G > F |
+
+Interpretation (honest): distributions and uncertainty rates differ materially across encoders at the
+same 0.35 threshold. e5-large's similarities cluster near 0.80 (everything clears the threshold, ranking
+flattens), which empirically demonstrates the project's core caveat — **cosine thresholds are not calibrated
+confidence**; per-model calibration on human-labeled data is required before any threshold is meaningful for
+a given encoder. MiniLM's 15.6% explicitly-uncertain rate shows the uncertainty mechanism working as designed.
 
 ## 8. Final API Cost Analysis
 
