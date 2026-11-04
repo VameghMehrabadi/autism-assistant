@@ -244,9 +244,21 @@ class SemanticLabeler:
 
         new_vectors: np.ndarray | None = None
         if missing:
-            new_vectors = self._encode_raw(
-                [normalized[i] for i in missing], role, batch_size
-            )
+            missing_texts = [normalized[i] for i in missing]
+            # Incremental persistence: encode and store in chunks so an
+            # interruption loses at most one chunk of computed embeddings
+            # instead of the whole pass.
+            chunk_size = max(1, int(getattr(config, "EMBED_CACHE_WRITE_CHUNK", 256)))
+            parts: list[np.ndarray] = []
+            for start in range(0, len(missing_texts), chunk_size):
+                chunk_texts = missing_texts[start : start + chunk_size]
+                chunk_vectors = self._encode_raw(chunk_texts, role, batch_size)
+                self._cache.store(chunk_texts, chunk_vectors, role=role)
+                parts.append(chunk_vectors)
+            if parts:
+                new_vectors = (
+                    parts[0] if len(parts) == 1 else np.vstack(parts)
+                )
 
         dim = 0
         if new_vectors is not None:
@@ -258,9 +270,6 @@ class SemanticLabeler:
             out[hit_positions] = hit_matrix
         if new_vectors is not None:
             out[missing] = new_vectors
-            self._cache.store(
-                [normalized[i] for i in missing], new_vectors, role=role
-            )
 
         log_event(
             logger,

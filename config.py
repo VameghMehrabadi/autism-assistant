@@ -186,6 +186,11 @@ ZAI_MODEL: str = "glm-5.3-flash"
 # Disk cache for embeddings (key = model + prefix + role + normalized text).
 EMBED_CACHE_ENABLED: bool = True
 EMBED_CACHE_DIR: Path = CACHE_DIR / "embed_cache"
+# نوشتن امبدینگ‌های جدید به کش در تکه‌های این اندازه — پیشرفت پس از هر تکه
+# ماندگار می‌شود، پس قطع‌شدن حداکثر یک تکه را از دست می‌دهد.
+# Embedding cache writes are chunked: progress persists after every chunk,
+# so an interruption loses at most one chunk of computed embeddings.
+EMBED_CACHE_WRITE_CHUNK: int = 256
 # حداکثر توکن ورودی برای هر مدل؛ None = پیش‌فرض خود مدل (رفتار قبلی).
 # Per-model max input tokens; None = the model's own default (previous behavior).
 # bge-m3 pinned to 512 for the comparison matrix: comparable with e5-large's

@@ -36,10 +36,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import random
+import re
 import sys
 import time
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -68,12 +71,99 @@ _TEXT_VIEW_KEYS = ("text",)
 
 
 class TranslationError(Exception):
-    """Provider/protocol failure with a machine-readable kind."""
+    """Provider/protocol failure with a machine-readable kind.
+
+    Kinds and retry policy (see ``NON_RETRYABLE_KINDS``):
+    - ``config``          — setup problem; never retried, never sent
+    - ``auth``            — 401/403; permanent; also aborts the whole job
+    - ``permanent``       — 400/404/405/422; permanent client error, fails fast
+    - ``rate_limit``      — 429; retried with Retry-After / exponential backoff
+    - ``timeout``         — connection/read timeout; retried
+    - ``api``             — connection errors and 5xx; retried
+    - ``truncated``       — finish_reason=length; batch falls back to singles,
+                            a truncated single fails without retry (the same
+                            request at temperature 0 reproduces it)
+    - ``parse`` / ``invalid_response`` — protocol problems; retried
+    """
 
     def __init__(self, kind: str, message: str, retry_after: float | None = None):
         super().__init__(message)
-        self.kind = kind  # config | rate_limit | timeout | api | parse | invalid_response
+        self.kind = kind
         self.retry_after = retry_after
+
+
+# Kinds that must fail fast instead of wasting retries (requirement: permanent
+# client errors and deterministic truncations never retry).
+NON_RETRYABLE_KINDS = frozenset({"config", "auth", "permanent", "truncated"})
+# Kinds that abort the entire job: every subsequent request would fail the
+# same way, so continuing would burn thousands of doomed calls.
+JOB_ABORT_KINDS = frozenset({"auth"})
+
+# HTTP statuses that are permanent client errors (fail fast, never retry).
+_PERMANENT_HTTP_STATUSES = frozenset({400, 404, 405, 422})
+
+
+class _JobAbort(Exception):
+    """Internal control flow: an auth-level failure aborts the whole job.
+
+    Never escapes the engine — ``_translate_accumulating`` converts it into
+    ``summary.stop_reason`` (``aborted_auth``)."""
+
+
+class UsageTracker:
+    """Centralized token accounting for one provider instance.
+
+    Actual usage metadata (from API responses) and conservative estimates
+    (when the provider reports no metadata) are tracked **separately** and
+    both count toward the quota guard. Estimates deliberately overcount:
+    ``chars / 2`` is ≥ the true token count for English/Persian text, so an
+    unknown-metadata response can never slip past the cap.
+    """
+
+    def __init__(self) -> None:
+        self.requests = 0
+        self.prompt_tokens = 0        # actual, from response usage metadata
+        self.completion_tokens = 0    # actual, from response usage metadata
+        self.total_tokens = 0         # actual total
+        self.estimated_prompt_tokens = 0
+        self.estimated_completion_tokens = 0
+        self.unknown_metadata_responses = 0
+
+    def record(self, usage: Any, prompt_chars: int, completion_chars: int) -> None:
+        self.requests += 1
+        reported = (
+            getattr(usage, "total_tokens", None)
+            or getattr(usage, "prompt_tokens", None)
+        )
+        if usage is not None and reported is not None:
+            self.prompt_tokens += int(getattr(usage, "prompt_tokens", 0) or 0)
+            self.completion_tokens += int(getattr(usage, "completion_tokens", 0) or 0)
+            self.total_tokens += int(getattr(usage, "total_tokens", 0) or 0)
+        else:
+            # No usage metadata: estimate conservatively (overcount by design).
+            self.unknown_metadata_responses += 1
+            self.estimated_prompt_tokens += max(1, math.ceil(prompt_chars / 2))
+            self.estimated_completion_tokens += max(
+                1, math.ceil(completion_chars / 2)
+            )
+
+    @property
+    def total_with_estimates(self) -> int:
+        return self.total_tokens + self.estimated_prompt_tokens + self.estimated_completion_tokens
+
+    def to_dict(self) -> dict[str, int]:
+        return {
+            "requests": self.requests,
+            "prompt_tokens": self.prompt_tokens,
+            "completion_tokens": self.completion_tokens,
+            "total_tokens": self.total_tokens,
+            "estimated_prompt_tokens": self.estimated_prompt_tokens,
+            "estimated_completion_tokens": self.estimated_completion_tokens,
+            "unknown_metadata_responses": self.unknown_metadata_responses,
+        }
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"UsageTracker({self.to_dict()})"
 
 
 # --------------------------------------------------------------------------
@@ -123,24 +213,22 @@ class OpenAIProvider(TranslationProvider):
         api_key: str | None = None,
         timeout: float = 60.0,
         base_url: str | None = None,
+        max_output_tokens: int | None = None,
     ):
         self.model = model
         self.timeout = timeout
         self.base_url = base_url
+        self.max_output_tokens = max_output_tokens
         self._api_key = api_key or os.environ.get("OPENAI_API_KEY")
         if not self._api_key:
             raise TranslationError(
                 "config",
                 "OPENAI_API_KEY is not set; export it or choose --provider mock.",
             )
-        # Token accounting from API usage metadata (input and output tokens
-        # are tracked separately — they are not interchangeable).
-        self.usage: dict[str, int] = {
-            "requests": 0,
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "total_tokens": 0,
-        }
+        # Token accounting is centralized in the tracker: actual usage
+        # metadata when the API reports it, conservative estimates otherwise;
+        # actual and estimated tokens are tracked separately.
+        self.tracker = UsageTracker()
         try:
             from openai import OpenAI  # lazy: only needed for real translation
         except ImportError as exc:
@@ -157,24 +245,77 @@ class OpenAIProvider(TranslationProvider):
             client_kwargs["base_url"] = base_url
         self._client = OpenAI(**client_kwargs)
 
+    @property
+    def usage(self) -> dict[str, int]:
+        """Token accounting snapshot (actual and estimated, distinguished)."""
+        return self.tracker.to_dict()
+
     def translate(self, segments: list[str]) -> str:
+        system = _load_system_prompt()
+        user = _build_user_message(segments)
+        prompt_chars = len(system) + len(user)
+        recorded = False
+
+        def _record_once(usage: Any, completion_chars: int) -> None:
+            nonlocal recorded
+            if not recorded:
+                self.tracker.record(usage, prompt_chars, completion_chars)
+                recorded = True
+
         try:
-            response = self._client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": _load_system_prompt()},
-                    {"role": "user", "content": _build_user_message(segments)},
+            create_kwargs: dict[str, Any] = {
+                "model": self.model,
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
                 ],
-                temperature=0,
+                "temperature": 0,
+            }
+            if self.max_output_tokens is not None:
+                create_kwargs["max_tokens"] = self.max_output_tokens
+            response = self._client.chat.completions.create(**create_kwargs)
+            choice = response.choices[0]
+            message = choice.message
+            # Thinking-mode tolerance: GLM models may attach a separate
+            # reasoning payload (reasoning_content). It is never part of the
+            # translation output — explicitly ignored, never parsed or logged.
+            _ = getattr(message, "reasoning_content", None)
+            content = message.content or ""
+            finish_reason = getattr(choice, "finish_reason", None)
+            self.tracker.record(
+                getattr(response, "usage", None), prompt_chars, len(content)
             )
-            _accumulate_usage(getattr(response, "usage", None), self.usage)
-            content = response.choices[0].message.content or ""
+            recorded = True
+            if finish_reason == "length":
+                # Deterministic at temperature 0 — retrying reproduces the
+                # truncation. The record fails and is retried on a later run
+                # if the operator raises --max-output-tokens.
+                raise TranslationError(
+                    "truncated",
+                    "provider truncated the output (finish_reason=length); "
+                    "consider raising --max-output-tokens",
+                )
             if not content.strip():
-                raise TranslationError("invalid_response", "provider returned empty content")
+                raise TranslationError(
+                    "invalid_response", "provider returned empty content"
+                )
+            content = _strip_think_blocks(content)
+            if not content.strip():
+                raise TranslationError(
+                    "invalid_response",
+                    "response contained only thinking content and no translatable output",
+                )
             return content
         except TranslationError:
+            # Usage for the attempt is already recorded on the success path;
+            # for pre-response failures record conservatively (estimate) so
+            # the quota guard can never be bypassed by erroring requests.
+            _record_once(None, 0)
             raise
-        except Exception as exc:  # map SDK exceptions to kinds
+        except Exception as exc:
+            # The request may still have been served server-side — count it
+            # conservatively (estimate) so the quota guard stays safe.
+            _record_once(None, 0)
             raise _map_provider_exception(exc) from exc
 
 
@@ -215,6 +356,13 @@ def _map_provider_exception(exc: Exception) -> TranslationError:
 
     Error strings come from the provider (status text); long messages are
     fingerprinted by the logging layer before they can reach any report.
+    Status codes are mapped precisely (requirement: permanent client errors
+    fail fast instead of wasting retries):
+
+    - 400 / 404 / 405 / 422 → ``permanent`` (fail fast)
+    - 401 / 403             → ``auth`` (fail fast + job abort)
+    - 429                   → ``rate_limit`` (retried, honors Retry-After)
+    - 5xx                   → ``api`` (retried)
     """
     name = type(exc).__name__
     retry_after: float | None = None
@@ -230,9 +378,39 @@ def _map_provider_exception(exc: Exception) -> TranslationError:
             retry_after = float(exc.retry_after)  # type: ignore[attr-defined]
         except (TypeError, ValueError):
             pass
+
+    status = getattr(exc, "status_code", None)
+    if status is None and response is not None:
+        status = getattr(response, "status_code", None)
+    try:
+        status = int(status) if status is not None else None
+    except (TypeError, ValueError):
+        status = None
+    if status is not None:
+        if status in (401, 403):
+            return TranslationError(
+                "auth",
+                f"HTTP {status}: authentication/authorization failed — check the "
+                "API key and its permissions",
+            )
+        if status in _PERMANENT_HTTP_STATUSES:
+            return TranslationError(
+                "permanent",
+                f"HTTP {status}: permanent client error (request will never "
+                "succeed as-is)",
+            )
+        if status == 429:
+            return TranslationError("rate_limit", "HTTP 429", retry_after=retry_after)
+        if 500 <= status < 600:
+            return TranslationError("api", f"HTTP {status}", retry_after=retry_after)
+
     lowered = name.lower()
     if "ratelimit" in lowered or "rate_limit" in lowered:
         return TranslationError("rate_limit", f"{name}", retry_after=retry_after)
+    if "authentication" in lowered or "permissiondenied" in lowered:
+        return TranslationError("auth", f"{name}", retry_after=retry_after)
+    if "badrequest" in lowered or "notfound" in lowered or "unprocessable" in lowered:
+        return TranslationError("permanent", f"{name}", retry_after=retry_after)
     if "timeout" in lowered or "apitimeout" in lowered:
         return TranslationError("timeout", f"{name}", retry_after=retry_after)
     if "connection" in lowered or "apiconnection" in lowered:
@@ -270,13 +448,31 @@ def _build_user_message(segments: list[str]) -> str:
     )
 
 
+_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+
+
+def _strip_think_blocks(text: str) -> str:
+    """Remove GLM thinking-mode blocks (``<think>…</think>``) from content.
+
+    An unclosed ``<think>`` (e.g. truncation mid-thinking) removes everything
+    from the opening tag on — the caller then sees empty content and raises
+    ``invalid_response`` instead of parsing reasoning text as a translation.
+    """
+    cleaned = _THINK_RE.sub("", text)
+    open_idx = cleaned.lower().find("<think>")
+    if open_idx != -1:
+        cleaned = cleaned[:open_idx]
+    return cleaned.strip()
+
+
 def parse_batch_response(content: str, n_expected: int) -> list[str]:
     """Parse the provider response into exactly ``n_expected`` strings.
 
     Raises :class:`TranslationError` (kind ``parse`` / ``invalid_response``)
     on malformed JSON, wrong element count, or non-string elements.
+    Thinking-mode blocks are stripped before parsing.
     """
-    text = content.strip()
+    text = _strip_think_blocks(content)
     # Tolerate markdown fences around the JSON array.
     if text.startswith("```"):
         text = text.strip("`")
@@ -431,6 +627,8 @@ class TranslationEngine:
         """Translate ``[(idx, field, text), ...]`` → ``{idx: {field: fa}}``.
 
         Raises the last :class:`TranslationError` after exhausting retries.
+        Permanent kinds (``auth``/``permanent``/``truncated`` singles) raise
+        immediately — failing fast instead of wasting retries.
         """
         segments = [text for _, _, text in work]
         last_error: TranslationError | None = None
@@ -441,10 +639,15 @@ class TranslationEngine:
                 return self._assign(work, translations)
             except TranslationError as exc:
                 last_error = exc
-                if exc.kind == "parse" and len(work) > 1:
-                    # Batch protocol failed → fall back to one segment per call.
+                if (
+                    exc.kind in {"parse", "truncated"} and len(work) > 1
+                ):
+                    # Batch protocol failed (or the batch output was
+                    # truncated) → fall back to one segment per call: shorter
+                    # responses both parse and fit output limits.
                     logger.warning(
-                        "batch parse failed; falling back to per-segment calls",
+                        "batch %s; falling back to per-segment calls",
+                        exc.kind,
                         extra={"event": "batch_fallback", "fields": {"n": len(work)}},
                     )
                     merged: dict[int, dict[str, str]] = {}
@@ -455,6 +658,8 @@ class TranslationEngine:
                         for idx, field_map in self._translate_segments([item]).items():
                             merged.setdefault(idx, {}).update(field_map)
                     return merged
+                if exc.kind in NON_RETRYABLE_KINDS:
+                    raise  # fail fast — retrying cannot succeed
                 if attempt < self.max_retries:
                     delay = self._backoff_delay(attempt, exc.retry_after)
                     logger.warning(
@@ -476,11 +681,17 @@ class TranslationEngine:
         self, work: list[tuple[int, str, str]], translations: list[str]
     ) -> dict[int, dict[str, str]]:
         assigned: dict[int, dict[str, str]] = {}
-        for (idx, field_name, _), translation in zip(work, translations):
+        for (idx, field_name, source_text), translation in zip(work, translations):
             text, reason = split_untranslatable(translation)
             if text is None:
                 # Marked untranslatable: record it as flagged, empty FA field.
                 assigned.setdefault(idx, {})[f"__flag__{field_name}"] = reason or ""
+            elif not translation.strip() and source_text.strip():
+                # Empty model output for a non-empty source segment: an
+                # incomplete translation must never be silently accepted.
+                assigned.setdefault(idx, {})[f"__flag__{field_name}"] = (
+                    "empty translation for non-empty source"
+                )
             else:
                 assigned.setdefault(idx, {})[field_name] = translation
         return assigned
@@ -548,6 +759,9 @@ class TranslationEngine:
             try:
                 assigned = self._translate_segments(work_slice)
             except TranslationError as exc:
+                attempts = (
+                    1 if exc.kind in NON_RETRYABLE_KINDS else self.max_retries + 1
+                )
                 for idx in sorted({i for i, _, _ in work_slice}):
                     if idx not in failed_idx:
                         failed_idx.add(idx)
@@ -557,9 +771,14 @@ class TranslationEngine:
                                 idx=idx,
                                 kind=exc.kind,
                                 message=str(sanitize_value("error", str(exc))),
-                                attempts=self.max_retries + 1,
+                                attempts=attempts,
                             )
                         )
+                if exc.kind in JOB_ABORT_KINDS:
+                    # Auth failures fail every future request too — abort the
+                    # job instead of burning thousands of doomed calls.
+                    summary.stop_reason = f"aborted_{exc.kind}"
+                    raise _JobAbort(exc) from exc
                 return
             for idx, field_map in assigned.items():
                 bucket = assignments.setdefault(idx, {})
@@ -574,48 +793,63 @@ class TranslationEngine:
                     emit(idx)
 
         def quota_exceeded() -> bool:
-            """Hard token-budget guard: input and output tokens both count."""
+            """Hard token-budget guard: actual AND estimated tokens both
+            count (requirement: unknown metadata is handled conservatively)."""
             cap = self.max_total_tokens
             if cap is None:
                 return False
             usage = getattr(self.provider, "usage", None)
-            return bool(usage and usage.get("total_tokens", 0) >= cap)
+            if not usage:
+                return False
+            consumed = (
+                usage.get("total_tokens", 0)
+                + usage.get("estimated_prompt_tokens", 0)
+                + usage.get("estimated_completion_tokens", 0)
+            )
+            return consumed >= cap
 
         work: list[tuple[int, str, str]] = []
-        for record in records:
-            if quota_exceeded():
-                summary.stop_reason = "quota_cap"
-                break
-            if record.idx in records_by_idx:
-                summary.duplicates_skipped += 1
-                continue
-            records_by_idx[record.idx] = record
-            if not record.fields:
-                on_result(
-                    build_output_record(
-                        record, {}, STATUS_EMPTY_SOURCE, self.provider.model
-                    )
-                )
-                emitted.add(record.idx)
-                summary.empty_source += 1
-                continue
-            work.extend((record.idx, f, t) for f, t in record.fields.items())
-            while len(work) >= self.batch_size:
+        try:
+            for record in records:
                 if quota_exceeded():
                     summary.stop_reason = "quota_cap"
-                    return
-                flush_slice(work[: self.batch_size])
-                work = work[self.batch_size :]
-                if self.inter_request_sleep:
-                    time.sleep(self.inter_request_sleep)
-                if on_progress and self.progress_every and len(emitted) and len(emitted) % self.progress_every == 0:
-                    on_progress(len(emitted))
+                    break
+                if record.idx in records_by_idx:
+                    summary.duplicates_skipped += 1
+                    continue
+                records_by_idx[record.idx] = record
+                if not record.fields:
+                    on_result(
+                        build_output_record(
+                            record, {}, STATUS_EMPTY_SOURCE, self.provider.model
+                        )
+                    )
+                    emitted.add(record.idx)
+                    summary.empty_source += 1
+                    continue
+                work.extend((record.idx, f, t) for f, t in record.fields.items())
+                while len(work) >= self.batch_size:
+                    if quota_exceeded():
+                        summary.stop_reason = "quota_cap"
+                        return
+                    flush_slice(work[: self.batch_size])
+                    work = work[self.batch_size :]
+                    if self.inter_request_sleep:
+                        time.sleep(self.inter_request_sleep)
+                    if on_progress and self.progress_every and len(emitted) and len(emitted) % self.progress_every == 0:
+                        on_progress(len(emitted))
+        except _JobAbort:
+            # stop_reason was set by flush_slice (auth-level failure).
+            pass
         if not summary.stop_reason:
             while work:
                 if quota_exceeded():
                     summary.stop_reason = "quota_cap"
                     break
-                flush_slice(work[: self.batch_size])
+                try:
+                    flush_slice(work[: self.batch_size])
+                except _JobAbort:
+                    pass
                 work = work[self.batch_size :]
         # Defensive drain: a record whose fields all succeeded but that was
         # never emitted (should not happen) is emitted here, never lost.
@@ -679,8 +913,42 @@ class TranslationEngine:
 
         done: dict[int, dict] = {}
         if out_path.exists():
-            done_rows, _ = _read_jsonl(out_path)
-            for row in done_rows:
+            # Repair interrupted writes first: a kill mid-append leaves a torn
+            # final line (and, rarely, mid-file garbage). Valid completed
+            # translations are preserved verbatim; only unparseable lines are
+            # dropped — loudly.
+            valid_lines: list[str] = []
+            repaired_lines = 0
+            with out_path.open("r", encoding="utf-8") as existing:
+                for line in existing:
+                    stripped = line.strip()
+                    if not stripped:
+                        continue
+                    try:
+                        parsed = json.loads(stripped)
+                    except json.JSONDecodeError:
+                        repaired_lines += 1
+                        continue
+                    if isinstance(parsed, dict) and "idx" in parsed:
+                        valid_lines.append(stripped)
+                    else:
+                        repaired_lines += 1
+            if repaired_lines:
+                backup = out_path.with_suffix(
+                    out_path.suffix + f".corrupt-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}"
+                )
+                out_path.replace(backup)  # keep the damaged file for inspection
+                with out_path.open("w", encoding="utf-8") as rewritten:
+                    for line in valid_lines:
+                        rewritten.write(line + "\n")
+                print(
+                    f"[translate] REPAIR: removed {repaired_lines} unparseable "
+                    f"line(s) from {out_path} after interrupted write; damaged "
+                    f"original kept as {backup.name}",
+                    file=sys.stderr,
+                )
+            for line in valid_lines:
+                row = json.loads(line)
                 if isinstance(row, dict) and "idx" in row:
                     done[int(row["idx"])] = row
 
@@ -706,6 +974,7 @@ class TranslationEngine:
             def on_result(row: dict) -> None:
                 fout.write(json.dumps(row, ensure_ascii=False) + "\n")
                 fout.flush()
+                os.fsync(fout.fileno())  # durable checkpoint per record
 
             self._translate_accumulating(pending, summary, on_result)
 
@@ -794,7 +1063,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--limit", type=int, default=None)
     p.add_argument("--max-total-tokens", type=int, default=None,
                    help="hard stop once the provider reports this many total "
-                        "tokens (input+output) — protects the account quota")
+                        "tokens (actual + conservative estimates) — protects "
+                        "the account quota")
+    p.add_argument("--max-output-tokens", type=int, default=None,
+                   help="cap the model's completion length per request "
+                        "(max_tokens); default: provider default")
     p.add_argument("--probe", action="store_true",
                    help="verify endpoint/auth/model access with one benign "
                         "request, print the verification report, and exit")
@@ -840,6 +1113,7 @@ def build_provider(args: argparse.Namespace) -> TranslationProvider:
             api_key=api_key,
             timeout=args.timeout,
             base_url=args.base_url or base_url,
+            max_output_tokens=args.max_output_tokens,
         )
     if args.provider == "openai":
         if not args.confirm_external_sharing:
@@ -849,7 +1123,10 @@ def build_provider(args: argparse.Namespace) -> TranslationProvider:
                 "service. Review your privacy and licensing constraints, then "
                 "pass --confirm-external-sharing to acknowledge.",
             )
-        return OpenAIProvider(model=_default_model(args), timeout=args.timeout)
+        return OpenAIProvider(
+            model=_default_model(args), timeout=args.timeout,
+            max_output_tokens=args.max_output_tokens,
+        )
     raise TranslationError("config", f"unknown provider '{args.provider}'")
 
 
