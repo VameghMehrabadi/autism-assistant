@@ -196,3 +196,56 @@ def test_cli_exit_codes(tmp_path: Path, monkeypatch, capsys):
     # ``sys.exit(main())`` wrapper under ``__main__``.
     assert qa.main() == 2
     capsys.readouterr()
+
+
+# --------------------------------------------------------------------------
+# Phase-2 (integrity): review completeness beyond the 200-item display cap
+# --------------------------------------------------------------------------
+
+
+def test_review_file_complete_beyond_display_cap(tmp_path: Path):
+    """300 issue records → the display list caps at 200, but the review file
+    must contain ALL 300 (the complete machine-readable map drives selection)."""
+    records = [
+        _record(i, output="کوتاه", output_en="x" * 200)  # SUSPICIOUSLY_SHORT
+        for i in range(300)
+    ]
+    path = _write_jsonl(tmp_path / "fa.jsonl", records)
+    report = validate_translation_file(path)
+    assert report["issues_total"] == 300
+    assert report["issues_exported"] == 200  # display cap
+    assert len(report["issues"]) == 200
+    assert len(report["idx_issue_codes"]) == 300  # complete machine-readable map
+
+    review_path = tmp_path / "review.jsonl"
+    count = write_review_file(path, review_path, report)
+    reviewed = [json.loads(l) for l in review_path.read_text(encoding="utf-8").splitlines() if l.strip()]
+    assert count == 300
+    assert {r["idx"] for r in reviewed} == set(range(300))
+    assert all("SUSPICIOUSLY_SHORT" in r["qa_issues"] for r in reviewed)
+
+
+def test_review_file_works_with_legacy_report_without_idx_map(tmp_path: Path):
+    """A report produced before idx_issue_codes existed (capped issues list)
+    still drives review selection via its issues list."""
+    records = [
+        _record(i, output="کوتاه", output_en="x" * 200) for i in range(5)
+    ]
+    path = _write_jsonl(tmp_path / "fa.jsonl", records)
+    report = validate_translation_file(path)
+    legacy = {k: v for k, v in report.items() if k != "idx_issue_codes"}
+    review_path = tmp_path / "review.jsonl"
+    count = write_review_file(path, review_path, legacy)
+    assert count == 5
+
+
+def test_report_reports_total_and_exported_issue_counts(tmp_path: Path):
+    records = [
+        _record(i, output="کوتاه", output_en="x" * 200) for i in range(50)
+    ]
+    path = _write_jsonl(tmp_path / "fa.jsonl", records)
+    report = validate_translation_file(path, max_listed_issues=10)
+    assert report["issues_total"] == 50
+    assert report["issues_exported"] == 10
+    assert len(report["issues"]) == 10
+    assert len(report["idx_issue_codes"]) == 50

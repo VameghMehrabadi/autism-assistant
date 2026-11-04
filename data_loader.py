@@ -68,6 +68,8 @@ class LoadReport:
     dedup: str = "keep_first"
     language_filter: str | None = None
     language_distribution: dict[str, int] = field(default_factory=dict)
+    translation_skipped: dict[str, int] = field(default_factory=dict)
+    dataset_total: int | None = None  # total source records available (before limit)
     sampling: str = "first"
     seed: int | None = None
     split: str | None = None
@@ -328,13 +330,51 @@ def _build_samples(
         language_filter=language_filter,
     )
 
-    # 1) normalize + schema validation
+    # 1) normalize + schema validation + translation-status gating
     candidates: list[tuple[int, dict[str, str]]] = []
     for position, raw_row in enumerate(rows):
         if not isinstance(raw_row, dict):
             report.non_object_records += 1
             continue
         row = dv.normalize_record(raw_row)
+
+        # Translation-status gate runs BEFORE content validation: records
+        # whose translation status is not `translated` are excluded outright
+        # (even if their fields are empty) and counted by status — never
+        # silently promoted, and never rescued by the patient-mode output
+        # fallback.
+        status = (row.get("status") or "").strip()
+        if status:
+            if status != "translated":
+                report.translation_skipped[status] = (
+                    report.translation_skipped.get(status, 0) + 1
+                )
+                report.issues.append(
+                    ValidationIssue(
+                        code=f"TRANSLATION_STATUS_{status.upper()}",
+                        position=position,
+                        message="record excluded: translation status is not 'translated'",
+                        severity="warning",
+                    )
+                )
+                continue
+            en_input = (row.get("input_en") or "").strip()
+            fa_input = (row.get("input") or "").strip()
+            if en_input and not fa_input:
+                report.translation_skipped["incomplete_input"] = (
+                    report.translation_skipped.get("incomplete_input", 0) + 1
+                )
+                report.issues.append(
+                    ValidationIssue(
+                        code="TRANSLATION_INCOMPLETE_INPUT",
+                        position=position,
+                        message="status=translated but the patient input is untranslated "
+                                "(FA input empty while EN input is present)",
+                        severity="warning",
+                    )
+                )
+                continue
+
         issues = dv.validate_record(row, position=position)
         report.issues.extend(issues)
         if any(i.severity == "error" for i in issues):
@@ -345,8 +385,12 @@ def _build_samples(
                 )
             continue
         candidates.append((position, row))
+    translation_skipped_total = sum(report.translation_skipped.values())
     report.skipped_invalid = (
-        report.total_rows - report.non_object_records - len(candidates)
+        report.total_rows
+        - report.non_object_records
+        - translation_skipped_total
+        - len(candidates)
     )
 
     # 2) duplicate detection / removal (content fingerprint)
@@ -412,6 +456,14 @@ def _build_samples(
         meta["record_hash"] = dv.record_fingerprint(row)
         meta["lang"] = dv.detect_language(text)
         meta["source"] = source
+        if row.get("status"):
+            meta["translation_status"] = row["status"]
+        # Preserve the original English content alongside the translation.
+        for en_key in ("instruction_en", "input_en", "output_en"):
+            if row.get(en_key):
+                meta[en_key] = row[en_key]
+        if row.get("flag_reason"):
+            meta["flag_reason"] = row["flag_reason"]
         samples.append(
             Sample(
                 idx=idx,
@@ -434,6 +486,7 @@ def _build_samples(
         language_filtered=report.language_filtered,
         empty_text=report.empty_text,
         malformed_lines=report.malformed_lines,
+        translation_skipped=report.translation_skipped,
         language_distribution=report.language_distribution,
     )
     return samples, report
@@ -497,6 +550,7 @@ def load_samples_en(
         seed=seed,
         language_filter=language_filter,
     )
+    report.dataset_total = len(ds)
     print(
         f"[data_loader] Prepared {len(samples)} English samples "
         f"(duplicates removed: {report.duplicates_removed})."
@@ -549,6 +603,7 @@ def load_samples_fa(
         seed=seed,
         language_filter=language_filter,
     )
+    report.dataset_total = len(rows)
     print(
         f"[data_loader] Prepared {len(samples)} Persian samples "
         f"(mode={config.LABEL_TEXT_MODE}, encoding={report.encoding}, "

@@ -282,6 +282,92 @@ def test_create_splits_rejects_items_without_hash():
         dv.create_splits([NoHash(), NoHash()], manifest_path=None)
 
 
+# --------------------------------------------------------------------------
+# Phase-2 (integrity): related-record leakage prevention in splits
+# --------------------------------------------------------------------------
+
+
+class _GroupableItem:
+    """Minimal Sample-like item with input_text + record_hash."""
+
+    def __init__(self, idx: int, input_text: str, record_hash: str):
+        self.idx = idx
+        self.input_text = input_text
+        self.meta = {"record_hash": record_hash}
+
+
+def test_assign_splits_grouped_keeps_related_records_together():
+    """Records sharing the same patient input (with different counselor
+    responses → different content hashes) must land in the SAME split."""
+    hashes = [f"h{i}" for i in range(6)]
+    # h0/h1 share one patient input; h2/h3 share another; h4, h5 are singletons
+    groups = ["input:A", "input:A", "input:B", "input:B", "full:h4", "full:h5"]
+    assignment = dv.assign_splits(hashes, eval_fraction=0.34, seed=1, group_keys=groups)
+    assert assignment["h0"] == assignment["h1"]
+    assert assignment["h2"] == assignment["h3"]
+    assert set(assignment.values()) == {"dev", "eval"}
+
+
+def test_assign_splits_grouped_deterministic():
+    hashes = [f"h{i}" for i in range(12)]
+    groups = [f"g{i % 6}" for i in range(12)]
+    a = dv.assign_splits(hashes, 0.34, seed=7, group_keys=groups)
+    b = dv.assign_splits(hashes, 0.34, seed=7, group_keys=groups)
+    assert a == b
+
+
+def test_assign_splits_grouped_eval_fraction_at_group_level():
+    hashes = [f"h{i}" for i in range(20)]
+    groups = [f"g{i}" for i in range(20)]  # all singletons → fraction == group fraction
+    assignment = dv.assign_splits(hashes, 0.2, seed=3, group_keys=groups)
+    n_eval = sum(1 for s in assignment.values() if s == "eval")
+    assert n_eval == 4  # round(20 * 0.2) groups
+
+
+def test_assign_splits_grouped_length_mismatch_raises():
+    with pytest.raises(ValueError):
+        dv.assign_splits(["a", "b"], 0.2, seed=1, group_keys=["g1"])
+
+
+def test_create_splits_related_records_same_split(tmp_path: Path):
+    """End-to-end: two records with the SAME patient input but different
+    counselor outputs (different content hashes) must share a split, across
+    several seeds."""
+    items = []
+    for i in range(30):
+        items.append(_GroupableItem(i, f"patient input {i}", f"hash-a{i}"))
+        # related record: same underlying input, different response
+        items.append(_GroupableItem(100 + i, f"patient input {i}", f"hash-b{i}"))
+    items.append(_GroupableItem(999, "", "hash-empty"))  # empty-input singleton
+
+    for seed in (0, 1, 2, 42):
+        dev, evaluation = dv.create_splits(
+            items, eval_fraction=0.25, seed=seed, manifest_path=tmp_path / "m.json"
+        )
+        dev_keys = {_item_group_key_mock(i) for i in dev}
+        eval_keys = {_item_group_key_mock(i) for i in evaluation}
+        assert dev_keys.isdisjoint(eval_keys), f"leak with seed={seed}"
+        # every group is entirely on one side
+        all_keys = dev_keys | eval_keys
+        assert len(all_keys) == 31  # 30 input groups + 1 empty-input singleton
+
+
+def _item_group_key_mock(item):
+    from data_validation import _item_group_key
+    return _item_group_key(item)
+
+
+def test_create_splits_manifest_records_grouping(tmp_path: Path):
+    items = [_GroupableItem(0, "shared input", "h0"), _GroupableItem(1, "shared input", "h1")]
+    dev, evaluation = dv.create_splits(
+        items, eval_fraction=0.5, seed=5, manifest_path=tmp_path / "m.json"
+    )
+    manifest = dv.load_split_manifest(tmp_path / "m.json")
+    assert manifest["grouped_by"] == "patient_input"
+    # related records stay together
+    assert (len(dev) == 0 and len(evaluation) == 2) or (len(dev) == 2 and len(evaluation) == 0)
+
+
 def test_filter_by_split_rejects_unknown_split(tmp_path: Path):
     with pytest.raises(ValueError):
         dv.filter_by_split([], "train", manifest_path=tmp_path / "m.json")

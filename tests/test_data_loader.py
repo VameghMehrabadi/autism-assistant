@@ -343,6 +343,205 @@ def test_split_rejects_unknown_split_name():
 
 
 # --------------------------------------------------------------------------
+# Phase-2 (integrity): translation-status gating in the loader
+# --------------------------------------------------------------------------
+
+
+def _translated_rows() -> list[dict]:
+    """Rows shaped like the Phase-6 translation output (status + *_en)."""
+    return [
+        {
+            "idx": 0,
+            "status": "translated",
+            "instruction": "مشاور: سلامت روان مهم است.",
+            "input": "فرزندم وقتی برنامه عوض می‌شود مضطرب می‌شود.",
+            "output": "ساختار و پیش‌بینی‌پذیری کمک می‌کند.",
+            "instruction_en": "Counsellor prompt.",
+            "input_en": "My child gets anxious when routines change.",
+            "output_en": "Structure and predictability help.",
+        },
+        {
+            "idx": 1,
+            "status": "flagged",
+            "flag_reason": "ambiguous idiom",
+            "instruction": "مشاور: پرامپت.",
+            "input": "ورودی نامطمئن.",
+            "output": "پاسخ نامطمئن.",
+            "instruction_en": "prompt", "input_en": "unclear input", "output_en": "unclear output",
+        },
+        {
+            "idx": 2,
+            "status": "failed",
+            "instruction": "", "input": " failed input", "output": "",
+            "instruction_en": "", "input_en": "failed input", "output_en": "",
+        },
+        {
+            "idx": 3,
+            "status": "pending",
+            "instruction": "", "input": "", "output": "",
+            "instruction_en": "", "input_en": "pending input", "output_en": "",
+        },
+        {
+            "idx": 4,
+            "status": "rejected",
+            "instruction": "", "input": "rejected", "output": "",
+            "instruction_en": "", "input_en": "rejected", "output_en": "",
+        },
+        {
+            "idx": 5,
+            "status": "translated",
+            "instruction": "مشاور: پرامپت دوم.",
+            "input": "",  # EN input also empty → instruction is the patient target
+            "output": "پاسخ دوم.",
+            "instruction_en": "Second prompt.", "input_en": "", "output_en": "Second reply.",
+        },
+        {
+            "idx": 6,
+            "status": "translated",
+            "instruction": "مشاور: ناقص.",
+            "input": "",  # EN input PRESENT but FA input empty → incomplete
+            "output": "پاسخ ناقص.",
+            "instruction_en": "Incomplete prompt.", "input_en": "real patient input", "output_en": "reply",
+        },
+        {
+            "idx": 7,
+            "status": "empty_source",
+            "instruction": "", "input": "", "output": "",
+            "instruction_en": "", "input_en": "", "output_en": "",
+        },
+    ]
+
+
+def test_translation_status_only_translated_enter_labeling(tmp_path: Path):
+    path = tmp_path / "translated.jsonl"
+    with path.open("w", encoding="utf-8") as f:
+        for row in _translated_rows():
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+    samples, report = load_samples_fa(path=path, return_report=True)
+
+    # Only idx 0 and 5 (both status=translated with complete/legitimate input)
+    assert [s.idx for s in samples] == [0, 5]
+    assert report.translation_skipped == {
+        "flagged": 1,
+        "failed": 1,
+        "pending": 1,
+        "rejected": 1,
+        "incomplete_input": 1,
+        "empty_source": 1,
+    }
+    codes = {i.code for i in report.issues}
+    assert {"TRANSLATION_STATUS_FLAGGED", "TRANSLATION_STATUS_FAILED",
+            "TRANSLATION_STATUS_PENDING", "TRANSLATION_STATUS_REJECTED",
+            "TRANSLATION_INCOMPLETE_INPUT"} <= codes
+    assert report.skipped_invalid == 0  # skipped rows are counted separately
+
+
+def test_translation_status_rejected_never_falls_back_to_counselor_output(tmp_path: Path):
+    """The exact reported bug: a flagged/failed record with a blank patient
+    input must never re-enter labeling through the counselor-output fallback."""
+    path = tmp_path / "flagged.jsonl"
+    row = {
+        "idx": 0,
+        "status": "flagged",
+        "instruction": "generic counsellor prompt",
+        "input": "",  # blank patient input — the dangerous fallback path
+        "output": "counsellor output that must not become the label",
+        "instruction_en": "generic counsellor prompt",
+        "input_en": "", "output_en": "counsellor output",
+    }
+    path.write_text(json.dumps(row, ensure_ascii=False), encoding="utf-8")
+    samples, report = load_samples_fa(path=path, return_report=True)
+    assert samples == []  # excluded outright
+    assert report.translation_skipped.get("flagged") == 1
+
+
+def test_translation_status_preserves_english_originals_in_meta(tmp_path: Path):
+    path = tmp_path / "one.jsonl"
+    row = _translated_rows()[0]
+    path.write_text(json.dumps(row, ensure_ascii=False), encoding="utf-8")
+    samples, _ = load_samples_fa(path=path, return_report=True)
+    s = samples[0]
+    assert s.meta["translation_status"] == "translated"
+    assert s.meta["input_en"] == "My child gets anxious when routines change."
+    assert s.input_text == "فرزندم وقتی برنامه عوض می‌شود مضطرب می‌شود."
+    assert s.response_text == "ساختار و پیش‌بینی‌پذیری کمک می‌کند."
+
+
+def test_legacy_rows_without_status_unaffected(tmp_path: Path):
+    """Status-less records (plain English dataset rows) keep the original
+    behavior — no gating applies, and the pre-existing patient-mode fallback
+    chain is unchanged (generic instructions are returned as-is by the final
+    fallback when no better target exists; the output fallback fires only
+    when input AND instruction are both empty)."""
+    path = tmp_path / "legacy.jsonl"
+    rows = [
+        {"idx": 0, "instruction": "specific patient question", "input": "", "output": "counselor reply"},
+        {"idx": 1,
+         "instruction": "You are a helpful mental health counselling assistant, please answer the mental health questions.",
+         "input": "", "output": "counselor reply"},
+        {"idx": 2, "instruction": "", "input": "", "output": "output-only fallback reply"},
+    ]
+    with path.open("w", encoding="utf-8") as f:
+        for row in rows:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    samples, report = load_samples_fa(path=path, return_report=True)
+    assert report.translation_skipped == {}
+    assert [s.idx for s in samples] == [0, 1, 2]
+    assert samples[0].text == "specific patient question"
+    assert samples[1].text == rows[1]["instruction"]  # legacy chain: non-output fallback
+    assert samples[2].text == "output-only fallback reply"  # legacy chain: output fallback
+
+
+# --------------------------------------------------------------------------
+# Phase-2 (integrity): export completeness metadata
+# --------------------------------------------------------------------------
+
+
+def test_write_export_meta_complete_and_incomplete(tmp_path: Path):
+    from export_for_translation import build_export_record, write_export
+
+    samples = []
+    for i in range(5):
+        s = Sample(
+            idx=i,
+            text=f"patient text {i}",
+            meta={"instruction": f"inst {i}", "input": f"in {i}", "output": f"out {i}"},
+            input_text=f"in {i}",
+            response_text=f"out {i}",
+        )
+        samples.append(s)
+
+    # Complete export
+    meta = write_export(samples, tmp_path / "full.jsonl", dataset_total=5)
+    assert meta["complete"] is True
+    assert meta["total_source"] == 5 and meta["exported"] == 5
+    meta_path = tmp_path / "full.export_meta.json"
+    assert meta_path.exists()
+    persisted = json.loads(meta_path.read_text(encoding="utf-8"))
+    assert persisted["complete"] is True
+    exported = [json.loads(l) for l in (tmp_path / "full.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
+    assert exported[0] == build_export_record(samples[0])
+
+    # Incomplete export (limited): clearly marked
+    meta2 = write_export(samples[:2], tmp_path / "partial.jsonl", dataset_total=5)
+    assert meta2["complete"] is False
+    persisted2 = json.loads((tmp_path / "partial.export_meta.json").read_text(encoding="utf-8"))
+    assert persisted2["complete"] is False
+    assert persisted2["exported"] == 2 and persisted2["total_source"] == 5
+
+
+def test_load_report_dataset_total_before_limit(tmp_path: Path):
+    path = tmp_path / "small.jsonl"
+    with path.open("w", encoding="utf-8") as f:
+        for i in range(6):
+            f.write(json.dumps({"idx": i, "instruction": f"متن {i}"}, ensure_ascii=False) + "\n")
+    samples, report = load_samples_fa(path=path, limit=2, return_report=True)
+    assert len(samples) == 2
+    assert report.dataset_total == 6  # total BEFORE the limit
+
+
+# --------------------------------------------------------------------------
 # Phase-1 regression: large UTF-8 Persian JSONL loads without mojibake
 # --------------------------------------------------------------------------
 

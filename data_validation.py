@@ -243,6 +243,27 @@ def record_fingerprint(row: dict[str, Any]) -> str:
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
+def record_group_key(row: dict[str, Any]) -> str:
+    """Grouping key that keeps *related* records together across splits.
+
+    The established key is the **normalized patient input**: records sharing
+    the same underlying input (e.g. identical patient messages paired with
+    different counselor responses) are related and must not be split across
+    dev/eval. Records with an empty input are keyed by their full-content
+    fingerprint instead (distinct singletons by construction). A prefix
+    prevents collisions between the two key spaces.
+
+    Limitation (documented): paraphrased or lightly-edited variants of the
+    same input are NOT grouped — exact-match grouping only. Detecting
+    paraphrase-level relatedness would require embedding clustering or human
+    judgment and is left to future work.
+    """
+    normalized_input = " ".join(str(row.get("input") or "").split())
+    if normalized_input:
+        return "input:" + normalized_input
+    return "full:" + record_fingerprint(row)
+
+
 def find_duplicate_groups(fingerprints: Sequence[str]) -> list[list[int]]:
     """Group positions that share the same fingerprint (groups of ≥2)."""
     by_hash: dict[str, list[int]] = {}
@@ -291,24 +312,52 @@ def assign_splits(
     hashes: Sequence[str],
     eval_fraction: float = 0.2,
     seed: int = 42,
+    group_keys: Sequence[str] | None = None,
 ) -> dict[str, str]:
     """Deterministically assign each unique hash to ``"dev"`` or ``"eval"``.
 
     Same hash list + same seed → identical assignment (reproducible). The
     assignment is keyed by content hash so a record always lands in the same
     split regardless of row order in later loads.
+
+    ``group_keys`` (optional, aligned with ``hashes``) prevents **related
+    records from leaking across splits**: all hashes sharing one group key
+    receive the same split (assignment is decided per group, deterministically
+    by seeded shuffling of the unique group keys). Without ``group_keys`` the
+    behaviour is unchanged from the original hash-level assignment.
     """
     if not 0.0 < eval_fraction < 1.0:
         raise ValueError(f"eval_fraction must be in (0, 1), got {eval_fraction}")
     unique = list(dict.fromkeys(hashes))
     if not unique:
         return {}
+
+    if group_keys is None:
+        rng = random.Random(seed)
+        order = list(range(len(unique)))
+        rng.shuffle(order)
+        n_eval = max(1, round(len(unique) * eval_fraction))
+        eval_set = {unique[i] for i in order[:n_eval]}
+        return {h: ("eval" if h in eval_set else "dev") for h in unique}
+
+    if len(group_keys) != len(hashes):
+        raise ValueError(
+            f"group_keys length ({len(group_keys)}) must match hashes length ({len(hashes)})"
+        )
+    groups: dict[str, list[str]] = {}
+    for h, g in zip(hashes, group_keys):
+        groups.setdefault(g, []).append(h)
+    unique_groups = sorted(groups)  # deterministic order before shuffling
     rng = random.Random(seed)
-    order = list(range(len(unique)))
-    rng.shuffle(order)
-    n_eval = max(1, round(len(unique) * eval_fraction))
-    eval_set = {unique[i] for i in order[:n_eval]}
-    return {h: ("eval" if h in eval_set else "dev") for h in unique}
+    rng.shuffle(unique_groups)
+    n_eval_groups = max(1, round(len(unique_groups) * eval_fraction))
+    eval_groups = set(unique_groups[:n_eval_groups])
+    assignment: dict[str, str] = {}
+    for g, members in groups.items():
+        split = "eval" if g in eval_groups else "dev"
+        for h in members:
+            assignment[h] = split
+    return assignment
 
 
 def _item_hash(item: Any) -> str | None:
@@ -330,6 +379,7 @@ def save_split_manifest(
     seed: int = 42,
     eval_fraction: float = 0.2,
     source: str | None = None,
+    grouped: bool = True,
 ) -> Path:
     """Persist the split assignment (hashes only — privacy-preserving)."""
     manifest_path = Path(path) if path else config.SPLIT_MANIFEST_PATH
@@ -342,6 +392,7 @@ def save_split_manifest(
         "seed": seed,
         "eval_fraction": eval_fraction,
         "source": source,
+        "grouped_by": "patient_input" if grouped else "record_hash",
         "n_dev": len(dev_hashes),
         "n_eval": len(eval_hashes),
         "dev_hashes": dev_hashes,
@@ -377,6 +428,27 @@ def check_no_leakage(
         )
 
 
+def _item_group_key(item: Any) -> str:
+    """Grouping key for split assignment (see :func:`record_group_key`).
+
+    Sample-like items: the separated patient input when present, otherwise
+    the record hash. Plain hash strings: the hash itself (no relatedness
+    information available)."""
+    if isinstance(item, str):
+        return "hash:" + item
+    input_text = getattr(item, "input_text", None)
+    if isinstance(input_text, str) and input_text.strip():
+        return "input:" + " ".join(input_text.split())
+    meta = getattr(item, "meta", None)
+    if isinstance(meta, dict) and meta.get("record_hash"):
+        return "full:" + str(meta["record_hash"])
+    if isinstance(item, dict):
+        h = item.get("record_hash")
+        if h:
+            return "full:" + str(h)
+    return "unkeyed"
+
+
 def create_splits(
     items: Sequence[Any],
     eval_fraction: float = 0.2,
@@ -387,7 +459,10 @@ def create_splits(
     """Split loaded items into (dev, eval), persist a manifest, verify disjoint.
 
     ``items`` must be Sample-like objects carrying ``meta["record_hash"]``
-    (as produced by the Phase-2 loader) or plain hash strings.
+    (as produced by the Phase-2 loader) or plain hash strings. Related
+    records — same underlying patient input — are kept in the same split via
+    :func:`_item_group_key`, preventing input-level leakage between dev and
+    eval.
     """
     seed = config.SAMPLING_SEED if seed is None else seed
     hashes: list[str] = []
@@ -399,7 +474,10 @@ def create_splits(
                 "data_loader.load_samples(...) so hashes are attached."
             )
         hashes.append(h)
-    assignment = assign_splits(hashes, eval_fraction=eval_fraction, seed=seed)
+    group_keys = [_item_group_key(item) for item in items]
+    assignment = assign_splits(
+        hashes, eval_fraction=eval_fraction, seed=seed, group_keys=group_keys
+    )
     dev = [item for item, h in zip(items, hashes) if assignment[h] == "dev"]
     evaluation = [item for item, h in zip(items, hashes) if assignment[h] == "eval"]
     save_split_manifest(
@@ -408,6 +486,7 @@ def create_splits(
         seed=seed,
         eval_fraction=eval_fraction,
         source=source,
+        grouped=True,
     )
     check_no_leakage(
         (h for h in hashes if assignment[h] == "dev"),

@@ -140,7 +140,14 @@ def validate_record(record: Any, position: int) -> tuple[list[QAIssue], int | st
 
 
 def validate_translation_file(path: str | Path, max_listed_issues: int = 200) -> dict[str, Any]:
-    """Validate a translated JSONL file and return a content-free report."""
+    """Validate a translated JSONL file and return a content-free report.
+
+    ``issues`` in the report is a **display list** capped at
+    ``max_listed_issues`` entries; the complete machine-readable mapping
+    ``idx_issue_codes`` (every record with issues → its issue codes) is
+    always present so no record can silently miss manual review.
+    ``issues_total`` and ``issues_exported`` report the difference.
+    """
     path = Path(path)
     report: dict[str, Any] = {
         "file": str(path),
@@ -152,8 +159,10 @@ def validate_translation_file(path: str | Path, max_listed_issues: int = 200) ->
         "duplicates": 0,
         "completion": Counter(),
         "issues_total": 0,
+        "issues_exported": 0,
         "issues_by_code": Counter(),
-        "issues": [],          # capped list of issue dicts (no content)
+        "issues": [],          # capped display list (no content)
+        "idx_issue_codes": {}, # complete machine-readable map: idx → [codes]
         "flagged_idx": [],
         "schema_expected_keys": sorted(
             ["idx", "status", "model", *SOURCE_FIELDS, *(f"{f}_en" for f in SOURCE_FIELDS)]
@@ -165,10 +174,22 @@ def validate_translation_file(path: str | Path, max_listed_issues: int = 200) ->
         report["issues"].append(
             QAIssue("-", "FILE_MISSING", "-", f"file not found: {path}").to_dict()
         )
+        report["issues_exported"] = len(report["issues"])
         return _finalize(report)
 
     seen_idx: set[int | str] = set()
     listed = 0
+
+    def _register(issue: QAIssue) -> None:
+        nonlocal listed
+        report["issues_total"] += 1
+        report["issues_by_code"][issue.code] += 1
+        key = str(issue.idx)
+        report["idx_issue_codes"].setdefault(key, []).append(issue.code)
+        if listed < max_listed_issues:
+            report["issues"].append(issue.to_dict())
+            listed += 1
+
     with path.open("r", encoding="utf-8") as handle:
         for position, line in enumerate(handle):
             line = line.strip()
@@ -196,11 +217,8 @@ def validate_translation_file(path: str | Path, max_listed_issues: int = 200) ->
                 if not issues:
                     report["n_valid"] += 1
             for issue in issues:
-                report["issues_total"] += 1
-                report["issues_by_code"][issue.code] += 1
-                if listed < max_listed_issues:
-                    report["issues"].append(issue.to_dict())
-                    listed += 1
+                _register(issue)
+    report["issues_exported"] = len(report["issues"])
     return _finalize(report)
 
 
@@ -220,10 +238,22 @@ def write_review_file(
     The review file is a *data* artifact (gitignored under ``data/``): it
     necessarily contains the text a human must read. Issue codes travel in
     the ``qa_issues`` key; logs and reports stay content-free.
+
+    Completeness: review selection uses the **uncapped** ``idx_issue_codes``
+    mapping (falling back to the capped ``issues`` display list only for
+    reports produced before that field existed), so records beyond any
+    display cap can never be silently dropped from review.
     """
     report = report or validate_translation_file(translated_path)
     flagged_idx = set(report.get("flagged_idx", []))
-    issue_idx = {issue["idx"] for issue in report.get("issues", []) if issue["code"] != "FILE_MISSING"}
+    idx_issue_codes = report.get("idx_issue_codes")
+    if idx_issue_codes is None:  # legacy report without the complete map
+        idx_issue_codes = {
+            str(i["idx"]): [i["code"]]
+            for i in report.get("issues", [])
+            if i["code"] != "FILE_MISSING"
+        }
+    issue_idx = {idx for idx, codes in idx_issue_codes.items() if codes}
     review_idx = flagged_idx | issue_idx
     if not review_idx:
         return 0
@@ -243,12 +273,10 @@ def write_review_file(
             if not isinstance(record, dict):
                 continue
             idx = record.get("idx")
-            record_issues = [
-                i for i in report.get("issues", [])
-                if i["idx"] == idx or i["code"] == "DUPLICATE_IDX"
-            ]
+            key = str(idx)
+            record_issues = idx_issue_codes.get(key, [])
             if idx in review_idx or record_issues:
-                record["qa_issues"] = [i["code"] for i in record_issues]
+                record["qa_issues"] = record_issues
                 dst.write(json.dumps(record, ensure_ascii=False) + "\n")
                 count += 1
     return count
