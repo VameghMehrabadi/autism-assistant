@@ -38,7 +38,38 @@ Chronological record of autonomous development phases. Detailed evidence lives i
 - **GUI verified in a real browser** (Streamlit headless + in-app browser): Home, Quick Label (live MiniLM inference: top-1 C 0.4240, multi-label C/B/D/A, decision badge, margin, cosine-not-probability captions), Results (run metadata + gap metrics). Fixed during the pass: Quick Label now renders **matched prototype evidence** (page passes `prototype_indices`). Screenshots in `gui-test-screenshots/`.
 - **Documentation**: README updated (roadmap status, Z.ai usage, limitations); this log; final report with API cost analysis (`reports/PROJECT_FINAL_REPORT.md`).
 
-## Known external blockers (final)
+## Known external blockers (at the final-completion phase; unchanged since)
 1. `ZAI_API_KEY` unavailable → Persian translation of the 16,005 records not executed (pipeline ready + quota-guarded).
 2. Runs 4–5 of the comparison matrix depend on that translation.
 3. Docker daemon not running in this environment → image build not exercised (Dockerfile/compose are pinned to the verified dependency set).
+
+## Phase 1 (integrity) — Encoding fix & dataset provenance (commit 835c696)
+- **Fixed** `detect_encoding`: a 65,536-byte sample ending mid-multibyte-character no longer misdetects large valid UTF-8 Persian JSONL as CP1256 (reproduced first: silent mojibake). Legitimate CP1256 files unaffected; small corrupt files still fail loudly.
+- Dataset integrity verified read-only: raw sources **9,774 (Synthetic) + 6,310 (Interview) = 16,084** (matches HF metadata); export 16,005 records with 0 invalid JSON, 0 duplicate IDs, 0 Persian contamination; 32 gap ranges = exactly the 79 deduplicated records.
+- Provenance: Interview_Data_6K = caregiver coaching from palliative/hospice content; Synthetic_Data_10K = general mental-health counseling; **autism terminology nearly absent dataset-wide** ("autism" ×5). Claimed composition (9,775+6,338=16,113) not reproducible from the distributed files — documented, nothing altered.
+
+## Phase 2 (integrity) — Pipeline integrity & leakage prevention (commit 826b8ae)
+- Loader: translation-status gate (only `translated` records enter labeling; flagged/failed/pending/rejected/empty_source/incomplete counted per status); `*_en` originals + `translation_status` + `flag_reason` preserved in `Sample.meta`; legacy status-less rows untouched.
+- Splits: related records (same normalized patient input) now share a dev/eval split — group-aware `assign_splits`/`create_splits`, manifest `grouped_by: patient_input`; exact-match limitation documented.
+- `translation_qa`: uncapped `idx_issue_codes` map — the 200-item display cap can no longer drop records from manual review; `issues_total` vs `issues_exported` reported.
+- Export safety: `*.export_meta.json` sidecar (total/exported/complete), loud INCOMPLETE warning, exit code 3; `LoadReport.dataset_total`; default export is now the full dataset.
+
+## Phase 3 (reliability) — Z.ai pipeline hardening (commit f82d17d)
+- Precise HTTP status mapping: 400/404/405/422 permanent (fail fast), 401/403 auth (**whole-job abort**), 429 rate-limit (Retry-After), 5xx retryable.
+- `finish_reason=length` rejected (`truncated`, no retry at temperature 0; batches fall back to singles); `--max-output-tokens` added.
+- Thinking-mode tolerance (`<think>` stripping; unclosed think → invalid_response; `reasoning_content` ignored); empty translations for non-empty sources flagged.
+- Checkpoint durability: per-record `fsync`; resume **repairs torn output lines** (corrupt original preserved as backup); embedding cache persisted **incrementally per 256-record chunk**.
+- Centralized `UsageTracker`: actual vs conservative-estimated tokens tracked separately; `--max-total-tokens` guard counts both.
+
+## Phase 4 (validity) — Evaluation methodology & comparison verification (commit 179d77a)
+- Cross-run verification: all three comparison runs used identical record sets (identical labeled-text fingerprint), identical facts (unchanged since before the runs), identical 0.35 threshold; counts sum to 16,005 everywhere.
+- `top_score_stats` (mean/median/p25/p75/min/max) added to every gap report — cosine scales are model-dependent; comparison Markdown carries explicit caveats (thresholds not comparable, higher scores ≠ better model, calibration requirement).
+- `run_meta.json` now records threshold/preprocess_version/text_window/dataset_fingerprint/dataset_total; new `compare_runs --verify-alignment` (live result on the real runs: all_records_aligned=true; runs 4–5 reported missing).
+- Gold evaluation set governance created (`data/gold/` + `gold_eval.py`): `origin: "human"` mandatory, two-round labeling + adjudication, versioning; **no labels fabricated** — empty set valid-but-empty.
+- UI: research-use warnings on Home, Run Pipeline, Results; Quick Label/Compare captions.
+
+## Phase 5 (release readiness) — GUI accuracy, Docker, documentation (this commit)
+- Translate/Export page now uses the safe export path (`write_export`): COMPLETE/INCOMPLETE status shown in-UI, sidecar metadata displayed, translation-status panel added; default export is the full dataset.
+- Docker compose: `ZAI_API_KEY` / `ZHIPU_API_KEY` / `ZAI_BASE_URL` forwarded to both services; **fixed pre-existing YAML typo** (`SENTENCE_TRANSFORMERS_HOME=` → `:` in the ui service); compose YAML-validated.
+- Research-use disclaimers added to Quick Label and Compare Models pages.
+- Consolidated `reports/PRIVACY_AND_SECURITY.md`; DEVELOPMENT_LOG extended; final report refreshed.

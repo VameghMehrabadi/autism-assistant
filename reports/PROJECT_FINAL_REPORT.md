@@ -7,15 +7,19 @@
 | Phase | Scope | Status |
 |---|---|---|
 | 0 | Stabilization: git, pinned dependencies, CI, fresh-install verification | ✅ COMPLETE (tested) |
-| 1 | Repository audit + architecture + roadmap | ✅ COMPLETE (reports) |
+| 1 (audit) | Repository audit + architecture + roadmap | ✅ COMPLETE (reports) |
+| 1 (integrity) | Encoding repair (UTF-8 boundary misdetection) + dataset integrity/provenance evidence | ✅ COMPLETE (reproduced → fixed → regression-tested) |
 | 2 | Data engineering: robust loading, validation, dedup, encodings, language ID, input/response separation, dev/eval leakage guard, privacy logging | ✅ COMPLETE (implemented + tested + executed) |
-| 3 | Semantic labeling engine: model registry, E5 prefixes, disk cache, per-category thresholds, explicit uncertainty, matched-prototype evidence, fact validation | ✅ COMPLETE (implemented + tested; MiniLM verified end-to-end) |
-| 6 (+6b) | Persian translation pipeline + Z.ai (GLM) provider: batching, retries, checkpoints, QA, completeness, quota guard | ✅ IMPLEMENTED + TESTED (mock-verified); **real translation blocked on `ZAI_API_KEY`** |
-| 4 | Model evaluation & comparison | ✅ **Runs 1, 2, 3 all executed** on the **full 16,005-record** dataset (MiniLM / bge-m3 / e5-large × English MentalChat16K; bge-m3 pinned to a documented 512-token window). Unified summary: `outputs/comparison/comparison_summary.{csv,json}` + `comparison_report.md` + chart. Key finding: the three models differ materially at the same 0.35 threshold — confident rates 84.4% / 100% / 100%, and e5-large's cosine scores concentrate near 0.80, empirically confirming that raw similarity thresholds are **not calibrated confidence** and require per-model calibration. **Runs 4–5 blocked** on the Persian dataset |
-| 5 | Gap analysis v2 (distribution, confidence, uncertainty, margin, prototype evidence) | ✅ COMPLETE (implemented + tested) |
-| 7 | Streamlit GUI | ✅ COMPLETE + verified in a real browser (screenshots in `gui-test-screenshots/`) |
-| 8 | Integration, testing, optimization | ✅ 185 tests passing; offline CI guards; embedding cache; fresh-venv install verified |
-| 9 | Production readiness & release docs | ✅ Documentation complete; Docker assets ready (build not exercised — no daemon) |
+| 2 (integrity) | Translation-status gating in the loader; input-grouped splits (leakage prevention); uncapped review selection; export completeness sidecars | ✅ COMPLETE (implemented + tested) |
+| 3 | Semantic labeling engine: model registry, E5 prefixes, disk cache, per-category thresholds, explicit uncertainty, matched-prototype evidence, fact validation | ✅ COMPLETE (implemented + tested; MiniLM verified end-to-end on the full dataset) |
+| 3 (reliability) | Z.ai pipeline hardening: permanent-error fail-fast, auth abort, truncation rejection, think-mode tolerance, fsync checkpoints, torn-output repair, incremental embedding cache, centralized actual-vs-estimated token accounting | ✅ COMPLETE (implemented + tested, mocked) |
+| 6 (+6b) | Persian translation pipeline + Z.ai (GLM) provider | ✅ IMPLEMENTED + TESTED (mock-verified); **real translation blocked on `ZAI_API_KEY`** |
+| 4 | Model evaluation & comparison | ✅ Runs 1–3 executed on the **full 16,005-record** dataset (verified equivalent inputs); unified report; **Runs 4–5 blocked** on the Persian dataset |
+| 4 (validity) | Evaluation methodology: score-scale honesty, alignment verification (`--verify-alignment`), gold-set governance (`origin: human`) | ✅ COMPLETE (implemented + tested) |
+| 5 | Gap analysis v2 (distribution, confidence, uncertainty, margin, prototype evidence, score-scale stats) | ✅ COMPLETE |
+| 7 | Streamlit GUI | ✅ COMPLETE + browser-verified; research-use disclaimers on all analysis pages; honest export/translation status panels |
+| 8 | Integration, testing, optimization | ✅ 246 tests passing; offline CI guards; embedding cache; fresh-venv install verified |
+| 9 | Production readiness & release docs | ✅ Documentation complete incl. `PRIVACY_AND_SECURITY.md`; Docker assets YAML-validated (build not exercised — no daemon) |
 
 ## 2. Implemented Features (all verified where marked)
 
@@ -30,10 +34,10 @@
 
 | Suite | Result |
 |---|---|
-| Full test suite (`pytest`) | **185 passed** |
-| Fresh isolated venv (final pinned requirements incl. `openai`) | **185 passed in a clean venv** (`pip check` clean) — installation instructions verified |
+| Full test suite (`pytest`) | **246 passed** |
+| Fresh isolated venv (final pinned requirements incl. `openai`) | **185 passed in a clean venv** at the final-release checkpoint; requirements unchanged since (only test additions) |
 | Dependency graph | `pip check` — no broken requirements |
-| GUI | browser-verified: Home, Quick Label (live MiniLM inference → top-1 C 0.4240, multi-label C/B/D/A, decision badge, margin, evidence table), Results (run metadata + metrics) |
+| GUI | browser-verified: Home (research-use warning), Quick Label (live MiniLM inference → decision badge, margin, evidence table), Results (run metadata + metrics) |
 | CI | workflow pinned + `pip check` + offline guards (`HF_HUB_OFFLINE=1` suite green) |
 
 ## 4. Dataset Status

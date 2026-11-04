@@ -1,12 +1,14 @@
 """Export English records and prepare Persian translation workflow."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import streamlit as st
 
 import config
 from data_loader import load_samples_en
+from export_for_translation import write_export
 from ui_lib.widgets import persian_dataset_ready, render_limit_input
 
 st.set_page_config(page_title="Translate / Export", layout="wide")
@@ -26,27 +28,74 @@ else:
     st.error(f"Missing prompt file: {prompt_path}")
 
 st.subheader("2 · Export English records")
-limit = render_limit_input(key="tr_limit", default=500)
+limit = render_limit_input(key="tr_limit", default=0)
 out_path = Path(
     st.text_input("Export path", value=str(out_default), key="tr_out")
+)
+st.caption(
+    "Default: the **full dataset**. A limited export is marked INCOMPLETE in "
+    "its sidecar metadata and must not be treated as the full dataset."
 )
 
 if st.button("Export for translation", type="primary"):
     try:
         lim = int(limit)
-        samples = load_samples_en(limit=None if lim <= 0 else lim)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        import json
-
-        with out_path.open("w", encoding="utf-8") as f:
-            for s in samples:
-                rec = {"idx": s.idx, "text": s.text, **s.meta}
-                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-        st.success(f"Wrote {len(samples)} records → `{out_path}`")
+        samples, load_report = load_samples_en(
+            limit=None if lim <= 0 else lim, return_report=True
+        )
+        meta = write_export(
+            samples,
+            out_path,
+            dataset_total=load_report.dataset_total,
+            load_report=load_report,
+        )
+        if meta["complete"]:
+            st.success(
+                f"COMPLETE export: {meta['exported']} of {meta['total_source']} "
+                f"source records → `{out_path}`"
+            )
+        else:
+            st.warning(
+                f"INCOMPLETE export: {meta['exported']} of "
+                f"{meta['total_source']} source records → `{out_path}`. "
+                "This file must NOT be treated as the full dataset."
+            )
     except Exception as e:
         st.exception(e)
 
-st.subheader("3 · Save Persian dataset")
+st.subheader("3 · Persian dataset status")
+meta_path = out_default.with_suffix(".export_meta.json")
+if meta_path.exists():
+    try:
+        export_meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        st.json(export_meta)
+        if export_meta.get("complete"):
+            st.info("✅ Export is COMPLETE (all source records included).")
+        else:
+            st.warning("⚠️ Export is INCOMPLETE — records are missing.")
+    except json.JSONDecodeError:
+        st.error(f"Unreadable export metadata: {meta_path}")
+
+summary_path = config.DATA_DIR / "translation_summary.json"
+if summary_path.exists():
+    try:
+        translation_summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        with st.expander("Translation status (from the engine)", expanded=False):
+            st.json(translation_summary)
+        completeness = translation_summary.get("completeness") or {}
+        if completeness.get("complete"):
+            st.success("✅ Translation complete: every source record translated.")
+        else:
+            st.info(
+                f"Translation progress: translated={completeness.get('translated')} "
+                f"missing={completeness.get('missing')} "
+                f"(total={completeness.get('total_source')})"
+            )
+    except json.JSONDecodeError:
+        st.warning(f"Unreadable translation summary: {summary_path}")
+else:
+    st.caption("No translation has been run yet (no engine summary found).")
+
 st.markdown(
     f"""
 After translation (GPT-4+), save JSONL as:

@@ -31,7 +31,7 @@ The Z.ai GLM API is OpenAI-compatible, so the integration **reuses the existing 
 ## 3. Pilot Plan (ready to execute the moment the key is provided)
 
 ```bash
-export ZAI_API_KEY="<your Z.ai key>"          # never commit it
+export ZAI_API_KEY=<paste-your-key-here>          # never commit it
 python translate_dataset.py --provider zai --probe --confirm-external-sharing
 # → verifies real endpoint + auth + glm-5.3-flash access (1 benign request)
 python translate_dataset.py --provider zai \

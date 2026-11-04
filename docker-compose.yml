@@ -12,6 +12,9 @@ services:
       SENTENCE_TRANSFORMERS_HOME: /cache/hf/sentence-transformers
       HF_TOKEN: ${HF_TOKEN:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ZAI_API_KEY: ${ZAI_API_KEY:-}
+      ZHIPU_API_KEY: ${ZHIPU_API_KEY:-}
+      ZAI_BASE_URL: ${ZAI_BASE_URL:-}
     volumes:
       - ./data:/app/data
       - ./outputs:/app/outputs
@@ -32,6 +35,9 @@ services:
       SENTENCE_TRANSFORMERS_HOME: /cache/hf/sentence-transformers
       HF_TOKEN: ${HF_TOKEN:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ZAI_API_KEY: ${ZAI_API_KEY:-}
+      ZHIPU_API_KEY: ${ZHIPU_API_KEY:-}
+      ZAI_BASE_URL: ${ZAI_BASE_URL:-}
     volumes:
       - ./data:/app/data
       - ./outputs:/app/outputs

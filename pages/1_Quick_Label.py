@@ -15,6 +15,10 @@ from ui_lib.widgets import (
 st.set_page_config(page_title="Quick Label", layout="wide")
 st.title("Quick Label")
 st.caption("Score one utterance against autism fact categories.")
+st.caption(
+    "⚠️ Research use only — cosine-similarity overlap, not diagnosis, "
+    "clinical confidence, or probability."
+)
 
 with st.sidebar:
     st.header("Settings")

@@ -25,6 +25,11 @@ st.caption(
     "Five runs — all use Persian facts × {English, English, English, Persian, Persian} "
     "dataset × MiniLM / bge-m3 / e5-large."
 )
+st.caption(
+    "⚠️ Research use only. Cosine thresholds are model-dependent and "
+    "uncalibrated — differences in confident rates partly reflect score-scale "
+    "differences, not model quality."
+)
 
 st.dataframe(
     pd.DataFrame(config.COMPARISON_RUNS)[
