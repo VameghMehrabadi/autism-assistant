@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -146,11 +147,13 @@ def run_pipeline(
         "sampling": sampling or config.SAMPLING_STRATEGY,
         "seed": seed if seed is not None else config.SAMPLING_SEED,
         "split": split,
+        "threshold": config.LABEL_THRESHOLD,
+        "preprocess_version": config.PREPROCESS_VERSION,
         **(run_meta or {}),
     }
 
     # 1) بارگذاری داده (حالت متن به‌صورت صریح پاس داده می‌شود — بدون جهش глобال)
-    samples = load_samples(
+    samples, load_report = load_samples(
         limit=limit,
         dataset=dataset,
         path=dataset_path,
@@ -158,6 +161,7 @@ def run_pipeline(
         sampling=sampling,
         seed=seed,
         split=split,
+        return_report=True,
     )
     if not samples:
         raise RuntimeError("No samples loaded.")
@@ -166,6 +170,14 @@ def run_pipeline(
 
     # 2) لیبل‌گذاری معنایی
     labeler = SemanticLabeler(model_key=model_key, fact_lang=fact_lang)
+    # Alignment metadata (Phase 4): the effective per-model text window and a
+    # content fingerprint of the exact labeled inputs — recorded so
+    # comparisons can verify equivalent inputs across runs.
+    meta["text_window"] = labeler.max_seq_tokens  # None = the model's own default
+    meta["dataset_fingerprint"] = hashlib.sha256(
+        "\u241f".join(texts).encode("utf-8")
+    ).hexdigest()[:16]
+    meta["dataset_total"] = load_report.dataset_total
     embs = labeler.embed_samples(texts)
     scores, prototype_indices = labeler.score_samples(embs, return_matches=True)
     results = labeler.assign_labels(scores, prototype_indices=prototype_indices)

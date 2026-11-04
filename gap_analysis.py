@@ -132,12 +132,28 @@ def build_report(df: pd.DataFrame, scores: np.ndarray,
     n_confident = int((top_scores >= threshold).sum())
     n_none = int((df["top_label"] == "NONE").sum()) if "NONE" in set(top_cats) else 0
 
+    # Score-scale statistics: cosine distributions are model-dependent, so the
+    # raw scale must travel with every report — identical thresholds are NOT
+    # comparable across encoders, and higher scores do not mean a better model.
+    top_scores_f = pd.to_numeric(df["top_score"], errors="coerce").dropna()
+    top_score_stats = None
+    if len(top_scores_f):
+        top_score_stats = {
+            "mean": round(float(top_scores_f.mean()), 4),
+            "median": round(float(top_scores_f.median()), 4),
+            "p25": round(float(top_scores_f.quantile(0.25)), 4),
+            "p75": round(float(top_scores_f.quantile(0.75)), 4),
+            "min": round(float(top_scores_f.min()), 4),
+            "max": round(float(top_scores_f.max()), 4),
+        }
+
     report = {
         "n_samples": n,
         "threshold": threshold,
         "n_confident": n_confident,
         "confident_rate": round(n_confident / n, 4) if n else 0.0,
         "n_unlabeled_NONE": n_none,
+        "top_score_stats": top_score_stats,
         "per_category": per_cat,
         "global_mean_score_per_category": global_cat_score,
         "ranking_weak_to_strong": ranking,

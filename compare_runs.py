@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -67,6 +68,13 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Skip a run if its gap_analysis.json already exists",
     )
+    p.add_argument(
+        "--verify-alignment",
+        action="store_true",
+        help="Read-only verification that persisted runs used equivalent "
+             "records, thresholds, and configurations; prints the alignment "
+             "report and exits",
+    )
     return p.parse_args()
 
 
@@ -91,6 +99,8 @@ _selected_runs = selected_runs
 
 def summarize_run(report: dict, run_cfg: dict) -> dict:
     pc = report["per_category"]
+    run_meta = report.get("run") or {}
+    top_score_stats = report.get("top_score_stats")
     return {
         "id": run_cfg["id"],
         "title": run_cfg["title"],
@@ -99,6 +109,19 @@ def summarize_run(report: dict, run_cfg: dict) -> dict:
         "dataset": run_cfg["dataset"],
         "n_samples": report["n_samples"],
         "confident_rate": report["confident_rate"],
+        "threshold": report.get("threshold"),
+        "top_score_stats": top_score_stats,
+        "score_scale_note": (
+            # Cosine scales are model-dependent: identical thresholds are not
+            # comparable across encoders, and higher scores do not indicate a
+            # better model.
+            "cosine scale is model-dependent; thresholds are not comparable "
+            "across models"
+        ),
+        "text_window": run_meta.get("text_window"),
+        "embed_prefix": run_meta.get("prefix"),
+        "labeler_version": run_meta.get("labeler_version"),
+        "dataset_fingerprint": run_meta.get("dataset_fingerprint"),
         "mean_top_score": round(
             float(np.mean([pc[c]["mean_score"] for c in CATEGORY_KEYS
                            if pc[c]["count"] > 0] or [0.0])),
@@ -207,6 +230,19 @@ def render_comparison_markdown(summaries: list[dict], table: pd.DataFrame) -> st
         "- Labeling uses **patient-only** text by default (skips the repeated "
         "counselor prompt and therapy reply that used to collapse almost all "
         "samples onto category F).",
+        "- **Thresholds are model-dependent**: all runs apply cosine threshold "
+        "0.35, but cosine score scales differ per encoder (e.g. e5-large "
+        "concentrates near 0.80). Confident-rate differences across models "
+        "partly reflect score-scale differences, **not** better or worse "
+        "model quality — higher cosine scores do not prove a better model.",
+        "- **Effective text windows differ per model** (MiniLM 128 tokens by "
+        "default; bge-m3 512; e5-large 512): long conversations truncate "
+        "differently — part of each model's configured preprocessing, "
+        "recorded per run in `run_meta.json` (`text_window`).",
+        "- **Cosine similarity is not a probability and not clinical "
+        "confidence.** Calibration against human-labeled data is required "
+        "before any threshold carries operational meaning "
+        "(see `data/gold/README.md`).",
         "- Prefer models whose category ranking is stable and whose confident_rate "
         "is not dominated by a single category unless that matches domain priors.",
         "",
@@ -240,8 +276,98 @@ def plot_comparison(summaries: list[dict], out_path: Path) -> None:
     print(f"[compare] Chart saved -> {out_path}")
 
 
+def verify_alignment(run_ids: list[str] | None = None) -> dict:
+    """Verify that persisted comparison runs are built on equivalent inputs.
+
+    Checks, per run and across runs (read-only):
+    - identical labeled-record ID sets (same records, none missing)
+    - identical label-text content fingerprint (same preprocessing output)
+    - identical label definitions period (facts.py unchanged across runs)
+    - identical decision threshold
+    - effective text window + embedding prefix per run (alignment metadata)
+
+    Returns a content-free verification report. Historical runs predating the
+    alignment metadata report ``null`` for the new fields — absence is
+    reported honestly, never backfilled.
+    """
+    import pandas as pd
+
+    runs = run_ids or [r["id"] for r in config.COMPARISON_RUNS]
+    base = config.COMPARISON_DIR
+    report: dict[str, Any] = {"runs": [], "all_records_aligned": None}
+    ref_idx: frozenset | None = None
+    ref_text_hash: str | None = None
+    ref_threshold = None
+    for run_id in runs:
+        run_dir = base / run_id
+        entry: dict[str, Any] = {"id": run_id, "dir": str(run_dir)}
+        labeled_path = run_dir / "labeled.csv"
+        meta_path = run_dir / "run_meta.json"
+        gap_path = run_dir / "gap_analysis.json"
+        if not (labeled_path.exists() and gap_path.exists()):
+            entry["status"] = "MISSING_ARTIFACTS"
+            report["runs"].append(entry)
+            continue
+        df = pd.read_csv(labeled_path)
+        idx_set = frozenset(pd.to_numeric(df["idx"], errors="coerce").dropna().astype(int))
+        text_hash = hashlib.sha256(
+            "\u241f".join(sorted(df["text"].astype(str))).encode("utf-8")
+        ).hexdigest()[:16]
+        gap = json.loads(gap_path.read_text(encoding="utf-8"))
+        meta = (
+            json.loads(meta_path.read_text(encoding="utf-8"))
+            if meta_path.exists()
+            else {}
+        )
+        entry.update(
+            {
+                "status": "ok",
+                "n_records": len(df),
+                "records_match_reference": None,  # set below
+                "text_fingerprint": text_hash,
+                "threshold": gap.get("threshold"),
+                "model": meta.get("model_key") or run_id,
+                "fact_lang": meta.get("fact_lang"),
+                "labeler_version": meta.get("labeler_version"),
+                "text_window": meta.get("text_window", "pre-alignment-metadata"),
+                "embed_prefix": meta.get("prefix"),
+                "dataset_fingerprint": meta.get("dataset_fingerprint"),
+            }
+        )
+        counts_sum = sum(
+            gap["per_category"][c]["count"] for c in gap["per_category"]
+        )
+        entry["category_counts_sum"] = counts_sum
+        entry["missing_records_vs_total"] = (
+            (meta.get("dataset_total") or counts_sum) - counts_sum
+        )
+        if ref_idx is None:
+            ref_idx, ref_text_hash, ref_threshold = idx_set, text_hash, gap.get("threshold")
+            entry["records_match_reference"] = True
+        else:
+            entry["records_match_reference"] = idx_set == ref_idx
+            entry["text_fingerprint_match"] = text_hash == ref_text_hash
+            entry["threshold_match"] = gap.get("threshold") == ref_threshold
+        report["runs"].append(entry)
+    record_checks = [
+        r.get("records_match_reference") for r in report["runs"] if r.get("status") == "ok"
+    ]
+    report["all_records_aligned"] = all(record_checks) if record_checks else None
+    report["n_runs_missing_artifacts"] = sum(
+        1 for r in report["runs"] if r.get("status") == "MISSING_ARTIFACTS"
+    )
+    return report
+
+
 def main() -> int:
     args = parse_args()
+    if args.verify_alignment:
+        report = verify_alignment()
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        if report["all_records_aligned"] is False:
+            return 4
+        return 0
+
     limit = args.limit if args.limit is not None else config.SAMPLE_LIMIT
     runs = selected_runs(args.only)
 

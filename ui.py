@@ -48,6 +48,14 @@ def main() -> None:
         "Semantic labeling & gap analysis for MentalChat16K × autism facts (A–G). "
         "Modular pipeline with a browser UI to run, compare, and inspect results."
     )
+    st.warning(
+        "**Research prototype — not a medical device.** This tool computes "
+        "cosine-similarity overlaps between text and research fact categories. "
+        "It does **not** diagnose autism, assess patients, or provide clinical "
+        "guidance of any kind. Scores are uncalibrated geometric heuristics. "
+        "For research use only.",
+        icon="⚠️",
+    )
 
     st.markdown(
         """
