@@ -61,6 +61,44 @@ def test_status_mapping_500_is_retryable_api():
     assert err.kind == "api"
 
 
+def test_status_mapping_zai_1113_quota_body_is_quota_exhausted():
+    """Z.ai reports account-level balance exhaustion as 429 + body code 1113 —
+    it must map to a non-retryable, job-aborting kind, not rate_limit."""
+    exc = SimpleNamespace(
+        status_code=429,
+        response=None,
+        retry_after=None,
+        body={"error": {"code": "1113", "message": "Insufficient balance or no resource package."}},
+    )
+    err = _map_provider_exception(exc)
+    assert err.kind == "quota_exhausted"
+    assert "1113" in str(err) or "balance" in str(err)
+
+
+def test_quota_exhausted_aborts_whole_job():
+    class QuotaFailProvider(td.TranslationProvider):
+        name, model = "quotafail", "test"
+        calls = 0
+
+        def translate(self, segments):
+            type(self).calls = getattr(type(self), "calls", 0) + 1
+            raise td.TranslationError("quota_exhausted", "insufficient balance")
+
+    provider = QuotaFailProvider()
+    engine = td.TranslationEngine(provider, batch_size=2, max_retries=3)
+    records = [
+        td.normalize_source_record(
+            {"idx": i, "instruction": f"p{i}", "input": f"m{i}", "output": f"r{i}"},
+            position=i,
+        )
+        for i in range(8)
+    ]
+    results, summary = engine.translate_records(records)
+    assert summary.stop_reason == "aborted_quota_exhausted"
+    assert summary.failed == 1  # first batch only — job aborted
+    assert provider.calls == 1  # fail fast: no retries, no doomed follow-ups
+
+
 def test_permanent_kinds_are_non_retryable():
     assert {"auth", "permanent", "truncated"} <= NON_RETRYABLE_KINDS
 

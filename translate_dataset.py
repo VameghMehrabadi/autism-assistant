@@ -94,10 +94,10 @@ class TranslationError(Exception):
 
 # Kinds that must fail fast instead of wasting retries (requirement: permanent
 # client errors and deterministic truncations never retry).
-NON_RETRYABLE_KINDS = frozenset({"config", "auth", "permanent", "truncated"})
+NON_RETRYABLE_KINDS = frozenset({"config", "auth", "permanent", "truncated", "quota_exhausted"})
 # Kinds that abort the entire job: every subsequent request would fail the
 # same way, so continuing would burn thousands of doomed calls.
-JOB_ABORT_KINDS = frozenset({"auth"})
+JOB_ABORT_KINDS = frozenset({"auth", "quota_exhausted"})
 
 # HTTP statuses that are permanent client errors (fail fast, never retry).
 _PERMANENT_HTTP_STATUSES = frozenset({400, 404, 405, 422})
@@ -400,6 +400,22 @@ def _map_provider_exception(exc: Exception) -> TranslationError:
                 "succeed as-is)",
             )
         if status == 429:
+            # Z.ai (and some OpenAI-compatible gateways) report account-level
+            # quota/balance exhaustion as 429 with a JSON body — retrying can
+            # never succeed until the account is recharged. Detected via the
+            # response body (code 1113 / balance message) → fail fast and
+            # abort the job like an auth failure.
+            body = getattr(exc, "body", None)
+            if body is None and response is not None:
+                body = getattr(response, "text", "") or ""
+            body_text = json.dumps(body, ensure_ascii=False) if not isinstance(body, str) else str(body)
+            if "1113" in body_text or "insufficient balance" in body_text.lower():
+                return TranslationError(
+                    "quota_exhausted",
+                    "account has insufficient balance or no active resource "
+                    "package (provider code 1113) — recharge or activate a "
+                    "resource package before running",
+                )
             return TranslationError("rate_limit", "HTTP 429", retry_after=retry_after)
         if 500 <= status < 600:
             return TranslationError("api", f"HTTP {status}", retry_after=retry_after)
