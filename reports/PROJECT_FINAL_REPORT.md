@@ -1,6 +1,6 @@
 # Autism Assistant — Final Project Report
 
-**Date:** 2026-11-03 · **Final release candidate** · Git: `main` (see commit log)
+**Date:** 2026-11-03 · **Release candidate — `v1` NOT yet taggable** (see §6 blockers and the authoritative checklist in `reports/PHASE_5_RELEASE_READINESS.md` §3) · Git: `main` (see commit log)
 
 ## 1. Completed Phases
 
@@ -19,7 +19,7 @@
 | 5 | Gap analysis v2 (distribution, confidence, uncertainty, margin, prototype evidence, score-scale stats) | ✅ COMPLETE |
 | 7 | Streamlit GUI | ✅ COMPLETE + browser-verified; research-use disclaimers on all analysis pages; honest export/translation status panels |
 | 8 | Integration, testing, optimization | ✅ 246 tests passing; offline CI guards; embedding cache; fresh-venv install verified |
-| 9 | Production readiness & release docs | ✅ Documentation complete incl. `PRIVACY_AND_SECURITY.md`; Docker assets YAML-validated (build not exercised — no daemon) |
+| 9 | Production readiness & release docs | ⚠️ **IMPLEMENTED — NOT EXECUTED (partially)**: documentation complete incl. `PRIVACY_AND_SECURITY.md`; compose YAML-validated; Docker image build attempted but **not completed** (base-image pull stalled) and no runtime smoke — tracked as release-checklist items D-1/D-2 in `reports/PHASE_5_RELEASE_READINESS.md` §3 |
 
 ## 2. Implemented Features (all verified where marked)
 
