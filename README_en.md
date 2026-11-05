@@ -19,9 +19,16 @@ embedding models for reliability.
 | Z.ai (GLM) provider integration | ✅ implemented + verified (offline + local live path); awaiting credentials |
 | Streamlit GUI | ✅ implemented + verified in a real browser (labeling, results, evidence tables) |
 | Tests | ✅ 174 passing (`pytest`); CI workflow in place |
-| Docker image | ⚠️ Dockerfile/compose ready and pinned; build not exercised (no Docker daemon in the dev environment) |
+| Docker image | ⚠️ **IMPLEMENTED — NOT EXECUTED**: Dockerfile/compose ready and pinned; YAML-validated, but the image build has never completed (see the release checklist) |
 
 Details: `reports/` (phase reports, final report, cost analysis), `DEVELOPMENT_LOG.md`.
+
+**Release status:** the authoritative v1 readiness checklist — including the
+four outstanding blockers (Z.ai-funded translation, comparison runs 4–5,
+Docker build + runtime smoke, human gold-data calibration) — lives in
+[`reports/PHASE_5_RELEASE_READINESS.md`](reports/PHASE_5_RELEASE_READINESS.md)
+§3. The project is **not** ready for a `v1` tag until every item there is
+checked with linked evidence.
 
 
 ## Pipeline
