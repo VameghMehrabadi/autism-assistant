@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import streamlit as st
 
+from data_validation import DataValidationError
 from ui_lib.caching import get_labeler, get_samples
 from ui_lib.display import render_label_result
 from ui_lib.widgets import (
+    MOCK_DATA_LABEL,
     render_dataset_selector,
     render_fact_lang_selector,
     render_limit_input,
@@ -42,6 +44,11 @@ if use_samples:
         samples = get_samples(dataset, int(limit) or 50, dataset_path)
     except FileNotFoundError as e:
         st.warning(str(e))
+        samples = []
+    except DataValidationError as e:
+        # Issue #25: mock datasets are refused by the loader — show the
+        # unmistakable mock label instead of a generic failure.
+        st.error(f"{MOCK_DATA_LABEL}\n\n{e}")
         samples = []
     except Exception as e:
         st.error(f"Dataset load failed: {e}")
