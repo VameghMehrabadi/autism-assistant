@@ -9,7 +9,13 @@ import streamlit as st
 import config
 from data_loader import load_samples_en
 from export_for_translation import write_export
-from ui_lib.widgets import persian_dataset_ready, render_limit_input
+from ui_lib.widgets import (
+    NOT_TRANSLATED_EN,
+    NOT_TRANSLATED_FA,
+    dataset_provenance,
+    persian_dataset_ready,
+    render_limit_input,
+)
 
 st.set_page_config(page_title="Translate / Export", layout="wide")
 st.title("Translate / Export")
@@ -116,6 +122,23 @@ status = (
     else "⏳ Persian dataset not found yet"
 )
 st.info(status)
+
+# Issue #25: provenance display — missing/mock/fixture data is always
+# explicitly labeled and never shown as a completed real translation.
+from ui_lib.widgets import NOT_TRANSLATED_EN, NOT_TRANSLATED_FA, dataset_provenance
+
+kind, label = dataset_provenance(config.PERSIAN_DATASET_PATH)
+if kind == "missing":
+    st.warning(
+        f"⚠️ {NOT_TRANSLATED_FA}\n\n{NOT_TRANSLATED_EN} "
+        f"Persian output: `{config.PERSIAN_DATASET_PATH}` — status: **INCOMPLETE**."
+    )
+elif kind == "mock":
+    st.error(f"🚫 {label}\n\n`{config.PERSIAN_DATASET_PATH}`")
+elif kind == "fixture":
+    st.warning(f"⚠️ {label}\n\n`{config.PERSIAN_DATASET_PATH}`")
+else:
+    st.success(f"✅ {label} — `{config.PERSIAN_DATASET_PATH}`")
 
 sample = config.ROOT / "tests" / "fixtures" / "mentalchat16k_fa.sample.jsonl"
 if sample.exists():
