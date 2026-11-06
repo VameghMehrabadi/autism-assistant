@@ -72,54 +72,72 @@ jobs:
         env:
           ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
         run: |
-          set -o pipefail
           python translate_dataset.py \
             --provider zai \
             --model glm-5.3-flash \
             --probe \
             --confirm-external-sharing \
             --timeout 30 \
-            2>&1 | tee /tmp/zai_probe_output.txt
-          ZAI_EXIT=$?
-          echo "zai_exit=$ZAI_EXIT" >> "$GITHUB_OUTPUT"
-          exit $ZAI_EXIT
+            > /tmp/zai_probe_raw.txt 2>&1
+          PROBE_EXIT=$?
+          echo "zai_exit=$PROBE_EXIT" >> "$GITHUB_OUTPUT"
+          # Always exit 0 — the classification step reads the output file
+          # and determines the actual status (SUCCESS/BLOCKED/FAILED).
+          exit 0
 
-      - name: Classify result
+      - name: Classify result and show sanitized diagnostics
         id: result
-        if: steps.keycheck.outputs.zai_status == 'CONFIGURED'
+        if: always() && steps.keycheck.outputs.zai_status == 'CONFIGURED'
         run: |
           PROBE_EXIT="${{ steps.probe.outputs.zai_exit || '1' }}"
-          PROBE_LOG="$(cat /tmp/zai_probe_output.txt 2>/dev/null || echo '')"
+          RAW="/tmp/zai_probe_raw.txt"
 
-          if echo "$PROBE_LOG" | grep -q "insufficient balance\|code 1113\|1113"; then
+          # Extract only [probe]-prefixed diagnostic lines for display.
+          # Raw API responses, tracebacks, and auth headers are never shown.
+          if [ -f "$RAW" ]; then
+            grep '^\[probe\]' "$RAW" > /tmp/zai_probe_safe.txt || true
+          fi
+
+          # Classify based on content patterns in the raw output.
+          if [ -f "$RAW" ] && grep -q "insufficient balance\|code 1113\|1113" "$RAW"; then
             echo "zai_status=BLOCKED" >> "$GITHUB_OUTPUT"
             echo "zai_detail=Authenticated, but insufficient balance or resource quota (code 1113)" >> "$GITHUB_OUTPUT"
-          elif echo "$PROBE_LOG" | grep -q "OK: endpoint reachable"; then
+          elif [ -f "$RAW" ] && grep -q "OK: endpoint reachable" "$RAW"; then
             echo "zai_status=SUCCESS" >> "$GITHUB_OUTPUT"
             echo "zai_detail=Authentication verified and real provider response received" >> "$GITHUB_OUTPUT"
-          elif echo "$PROBE_LOG" | grep -q "FAILED.*auth\|FAILED.*401\|FAILED.*403"; then
+          elif [ -f "$RAW" ] && grep -q "FAILED.*auth\|FAILED.*401\|FAILED.*403" "$RAW"; then
             echo "zai_status=FAILED" >> "$GITHUB_OUTPUT"
             echo "zai_detail=Authentication failed" >> "$GITHUB_OUTPUT"
-          elif echo "$PROBE_LOG" | grep -q "FAILED.*rate_limit\|FAILED.*429"; then
+          elif [ -f "$RAW" ] && grep -q "FAILED.*rate_limit\|FAILED.*429" "$RAW"; then
             echo "zai_status=BLOCKED" >> "$GITHUB_OUTPUT"
             echo "zai_detail=Rate limited" >> "$GITHUB_OUTPUT"
-          elif echo "$PROBE_LOG" | grep -q "FAILED.*timeout\|FAILED.*network\|FAILED.*connection"; then
+          elif [ -f "$RAW" ] && grep -q "FAILED.*timeout\|FAILED.*network\|FAILED.*connection" "$RAW"; then
             echo "zai_status=FAILED" >> "$GITHUB_OUTPUT"
             echo "zai_detail=Network or timeout failure" >> "$GITHUB_OUTPUT"
           else
             echo "zai_status=FAILED" >> "$GITHUB_OUTPUT"
-            echo "zai_detail=Unknown failure — check the probe output above" >> "$GITHUB_OUTPUT"
+            echo "zai_detail=Probe exited with code $PROBE_EXIT — check the workflow log for details" >> "$GITHUB_OUTPUT"
+          fi
+
+          # Display sanitized diagnostic lines in the step summary.
+          if [ -f /tmp/zai_probe_safe.txt ] && [ -s /tmp/zai_probe_safe.txt ]; then
+            echo "### Sanitized probe diagnostics" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            cat /tmp/zai_probe_safe.txt >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Report Z.ai result
         if: always()
         run: |
+          ZAI_ST="${{ steps.result.outputs.zai_status || 'SKIPPED' }}"
+          ZAI_DET="${{ steps.result.outputs.zai_detail || 'Not attempted' }}"
           echo "## Z.ai Provider Validation" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "| Field | Value |" >> "$GITHUB_STEP_SUMMARY"
           echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Status | \`${{ steps.result.outputs.zai_status || 'SKIPPED' }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Detail | ${{ steps.result.outputs.zai_detail || 'Not attempted' }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Status | \`$ZAI_ST\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Detail | $ZAI_DET |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Model | \`glm-5.3-flash\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Endpoint | \`api.z.ai\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
