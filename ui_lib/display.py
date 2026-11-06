@@ -159,12 +159,23 @@ def render_gap_summary(report: dict) -> None:
         st.dataframe(df, use_container_width=True, hide_index=True)
         st.bar_chart(df.set_index("Cat")[["Top-1", "Multi"]])
 
-    # Issue #19: show a warning when Phase-3 metrics are unavailable.
-    if n_uncertain is None and margin_stats is None:
+    # Issue #19: show a warning when ANY Phase-3 metric is unavailable.
+    # Partial schemas (e.g. matched_fact_ids present but decision absent) are
+    # named explicitly so the user knows exactly what is missing.
+    missing_p3 = []
+    if n_uncertain is None:
+        missing_p3.append("decision")
+    if margin_stats is None:
+        missing_p3.append("margin")
+    matched_unavailable = any(
+        data.get("matched_count") is None for data in pc.values()
+    )
+    if matched_unavailable:
+        missing_p3.append("matched_fact_ids")
+    if missing_p3:
         st.warning(
-            "⚠️ Phase-3 result fields (decision, margin, matched prototypes) "
-            "are not present in this run's gap report. These metrics are "
-            "unavailable, not zero.",
+            f"⚠️ Phase-3 result fields not available in this run: "
+            f"{', '.join(missing_p3)}. These metrics are unavailable, not zero.",
             icon="⚠️",
         )
 
