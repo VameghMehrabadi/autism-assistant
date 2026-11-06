@@ -32,7 +32,7 @@ Details: `reports/` (phase reports, final report, cost analysis), `DEVELOPMENT_L
 4. `gap_analysis.py` — Distribution, score stats, weak/strong categories, chart.
 5. `main.py` — Single-run orchestration.
 6. `compare_runs.py` — Five-way model/language comparison.
-7. `export_for_translation.py` + `translate_dataset.py` + `prompts/semantic_persian_translation.txt` — Export and GPT-4+ Persian translation.
+7. `export_for_translation.py` + `translate_dataset.py` + `prompts/semantic_persian_translation.txt` — Export and LLM Persian translation (provider configurable via `--provider`).
 
 ## Supported embedding models
 
@@ -52,7 +52,7 @@ Details: `reports/` (phase reports, final report, cost analysis), `DEVELOPMENT_L
 | 4 | Persian | Persian | bge-m3 |
 | 5 | Persian | Persian | multilingual-e5-large |
 
-> Runs 1–3 use the original English MentalChat16K; runs 4–5 use the GPT-4+ Persian translation.
+> Runs 1–3 use the original English MentalChat16K; runs 4–5 use the LLM-translated Persian dataset (provider configurable; see translate_dataset.py).
 
 ## Install
 

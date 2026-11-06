@@ -32,7 +32,7 @@
 4. `gap_analysis.py` — توزیع دسته‌ها، آمار امتیاز، دسته‌های قوی/ضعیف و نمودار.
 5. `main.py` — اجرای تک‌پیکربندی.
 6. `compare_runs.py` — مقایسه‌ی ۵ پیکربندی.
-7. `export_for_translation.py` + `translate_dataset.py` + `prompts/semantic_persian_translation.txt` — خروجی و ترجمه‌ی GPT-4+.
+7. `export_for_translation.py` + `translate_dataset.py` + `prompts/semantic_persian_translation.txt` — خروجی و ترجمه‌ی LLM (ارائه‌دهنده از طریق `--provider` قابل‌تنظیم است).
 
 ## مدل‌های امبدینگ
 
@@ -52,7 +52,7 @@
 | 4 | فارسی | فارسی | bge-m3 |
 | 5 | فارسی | فارسی | multilingual-e5-large |
 
-> اجرا‌های ۱-۳ روی دیتاست انگلیسی MentalChat16K و اجرا‌های ۴-۵ روی نسخه‌ی ترجمه‌شده‌ی فارسی (با GPT-4+) انجام می‌شوند.
+> اجرا‌های ۱-۳ روی دیتاست انگلیسی MentalChat16K و اجرا‌های ۴-۵ روی نسخه‌ی ترجمه‌شده‌ی فارسی (با LLM) انجام می‌شوند.
 
 ## Install / نصب
 
