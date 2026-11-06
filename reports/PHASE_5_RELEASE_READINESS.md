@@ -1,6 +1,27 @@
 # Phase 5: GUI, Documentation & Release Readiness — Report
 
-**Status: COMPLETE** — GUI verified in a real browser with the new safeguards, Docker credential forwarding fixed and YAML-validated, documentation consolidated and refreshed, full verification executed. **246/246 tests passing** in the working venv **and** in a fresh isolated venv. No API calls, no translations, no model downloads.
+**Status: IMPLEMENTED — NOT EXECUTED (release readiness).** The Phase-5
+implementation (GUI, docs, Docker config, test suite) is complete and locally
+verified (246/246 tests, browser-verified GUI). However, release readiness
+requires execution evidence that is still missing: the Docker image has never
+been built, the real Z.ai translation has never been run, and the gold
+evaluation data has never been labeled.
+
+## Release checklist (authoritative — added by Issue #21)
+
+**Every box must be checked with linked execution evidence before `v1`.**
+
+- [ ] Z.ai credentials verified (`--probe` exit 0) — BLOCKED: account code 1113
+- [ ] Real Z.ai translation executed (20-record pilot → 16,005 full run) and output validated — BLOCKED (by above)
+- [ ] Pipeline run 4 completed and evidence recorded (`outputs/comparison/4_fa_fa_bge-m3/`) — BLOCKED
+- [ ] Pipeline run 5 completed and evidence recorded (`outputs/comparison/5_fa_fa_e5-large/`) — BLOCKED
+- [ ] Docker image built (`docker build --progress plain -t autism-assistant:latest .`) — IMPLEMENTED — NOT EXECUTED
+- [ ] Docker container/runtime smoke (`docker compose up` + health check) — IMPLEMENTED — NOT EXECUTED
+- [ ] Human calibration of gold evaluation data (`gold_eval.py valid: true`) — PENDING HUMAN REVIEW
+- [ ] Per-model threshold calibration computed from gold labels — PENDING HUMAN REVIEW
+- [ ] Relevant evaluation results reviewed and accepted — PENDING HUMAN REVIEW
+- [ ] All release documentation updated — PENDING
+- [ ] Final release verification before `v1` tag — PENDING
 
 ## 1. GUI (verified in-browser, port 8602)
 
