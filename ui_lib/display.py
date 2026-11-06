@@ -8,6 +8,45 @@ import streamlit as st
 
 from facts import CATEGORIES
 
+# Phase-3 columns that may be absent in legacy labeled.csv files.
+PHASE3_COLUMNS: tuple[str, ...] = ("decision", "margin", "matched_fact_ids")
+
+_MISSING_PHASE3_FA = (
+    "این اجرا فیلدهای Phase 3 مانند margin و decision را ندارد؛ "
+    "بنابراین این مقادیر قابل گزارش نیستند."
+)
+_MISSING_PHASE3_EN = (
+    "This run does not contain Phase 3 fields such as margin and decision. "
+    "These metrics are unavailable for this run."
+)
+
+
+def detect_phase3_availability(df: pd.DataFrame) -> dict[str, bool]:
+    """Check which Phase-3 columns exist in a labeled DataFrame.
+
+    Returns a dict mapping each Phase-3 column name to ``True`` (present)
+    or ``False`` (absent). A column that exists but contains all-null
+    values is reported as present — the caller must distinguish
+    "column absent" from "column present but value is null/zero".
+    """
+    return {col: col in df.columns for col in PHASE3_COLUMNS}
+
+
+def phase3_missing_warning(df: pd.DataFrame) -> str | None:
+    """Return a human-readable warning when Phase-3 columns are absent.
+
+    Returns ``None`` when all Phase-3 columns are present.
+    """
+    availability = detect_phase3_availability(df)
+    missing = [col for col, present in availability.items() if not present]
+    if not missing:
+        return None
+    return (
+        f"⚠️ {_MISSING_PHASE3_EN}\n\n"
+        f"Missing columns: {', '.join(missing)}\n\n"
+        f"{_MISSING_PHASE3_FA}"
+    )
+
 
 def build_score_table(score_vector: dict[str, float]) -> pd.DataFrame:
     rows = []
@@ -84,6 +123,20 @@ def render_gap_summary(report: dict) -> None:
     ranking = report.get("ranking_weak_to_strong", [])
     c3.metric("Weak → Strong", " → ".join(ranking) if ranking else "—")
 
+    # Issue #19: display Phase-3 metrics honestly — N/A when unavailable.
+    n_uncertain = report.get("n_uncertain")
+    margin_stats = report.get("margin_stats")
+    if n_uncertain is not None:
+        c1.metric("Explicitly uncertain", str(n_uncertain))
+    else:
+        c1.metric("Explicitly uncertain", "N/A",
+                  help="Phase-3 result schema not present in this run's labeled.csv")
+    if margin_stats is not None:
+        c2.metric("Margin (median)", str(margin_stats.get("median", "N/A")))
+    else:
+        c2.metric("Margin (median)", "N/A",
+                  help="Phase-3 result schema not present in this run's labeled.csv")
+
     pc = report.get("per_category", {})
     rows = []
     for cat, data in pc.items():
@@ -95,11 +148,36 @@ def render_gap_summary(report: dict) -> None:
             "Multi": data.get("multi_count", 0),
             "Multi share": data.get("multi_share", 0),
             "Global mean": data.get("global_mean_score", data.get("mean_score", 0)),
+            "Matched": (
+                data.get("matched_count")
+                if data.get("matched_count") is not None
+                else "N/A"
+            ),
         })
     if rows:
         df = pd.DataFrame(rows)
         st.dataframe(df, use_container_width=True, hide_index=True)
         st.bar_chart(df.set_index("Cat")[["Top-1", "Multi"]])
+
+    # Issue #19: show a warning when ANY Phase-3 metric is unavailable.
+    # Partial schemas (e.g. matched_fact_ids present but decision absent) are
+    # named explicitly so the user knows exactly what is missing.
+    missing_p3 = []
+    if n_uncertain is None:
+        missing_p3.append("decision")
+    if margin_stats is None:
+        missing_p3.append("margin")
+    matched_unavailable = any(
+        data.get("matched_count") is None for data in pc.values()
+    )
+    if matched_unavailable:
+        missing_p3.append("matched_fact_ids")
+    if missing_p3:
+        st.warning(
+            f"⚠️ Phase-3 result fields not available in this run: "
+            f"{', '.join(missing_p3)}. These metrics are unavailable, not zero.",
+            icon="⚠️",
+        )
 
 
 def list_output_runs(base: Path) -> list[Path]:
