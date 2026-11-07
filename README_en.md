@@ -91,6 +91,47 @@ UI: [http://localhost:8501](http://localhost:8501). Models download on first use
 docker compose run --rm pipeline main.py --limit 50 --model minilm --fact-lang fa --dataset en
 ```
 
+## Deployment & access — local vs public (Issue #12)
+
+**Default = localhost only.** The UI binds to the loopback interface
+(`.streamlit/config.toml`) and the Docker host port publishes on
+`127.0.0.1` — nobody on the LAN/VPN/clinic network can open it. The
+container itself listens on `0.0.0.0` internally (required for Docker port
+forwarding); exposure is decided by the host-side published address, not by
+the container.
+
+```bash
+# local mode (default — no credential needed, loopback only)
+docker compose up --build            # -> http://127.0.0.1:8501 on this machine only
+# or without Docker:
+python -m streamlit run ui.py
+```
+
+**Public mode is explicit and requires a credential.** Setting
+`BIND_PUBLIC=1` without a password fails closed (compose aborts; the app
+refuses to serve content). Public exposure requires all three, deliberately:
+
+```bash
+BIND_PUBLIC=1 APP_AUTH_PASSWORD='choose-a-long-passphrase'   docker compose -f docker-compose.yml -f docker-compose.public.yml up --build
+```
+
+- `APP_AUTH_PASSWORD` (or `.streamlit/secrets.toml` → `[auth] password`,
+  ≥ 8 chars in public mode) unlocks the single shared operator login.
+  The value is never logged, hardcoded, or stored in session state.
+- The login gate (`ui_lib/auth.py`, constant-time comparison) sits before
+  any content on the home page and every sub-page; **Logout** clears it.
+- **XSRF is not authentication** — it protects against cross-site request
+  forgery, not against strangers opening the page.
+- **This is not multi-user isolation**: one credential, one shared
+  workspace — conversations, labels, `data/`, `outputs/` are common to all
+  users of the instance.
+- **Remote/clinical access should use TLS**: put an authenticated,
+  TLS-terminating reverse proxy (e.g. Caddy `basic_auth`) in front and keep
+  the Streamlit port loopback-only on the proxy host. The app serves plain
+  HTTP — never expose it raw over an untrusted network.
+- To stop public exposure: re-run plain `docker compose up -d` (loopback
+  only) and remove the override file from the command.
+
 ## Translate dataset to Persian
 
 ```bash

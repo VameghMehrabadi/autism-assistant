@@ -43,6 +43,13 @@ def main() -> None:
         initial_sidebar_state="expanded",
     )
 
+    # Issue #12 — deployment-security gate: must run before ANY content is
+    # rendered. Anonymous on localhost; login required when a credential is
+    # configured or BIND_PUBLIC=1 (fail-closed validation inside).
+    from ui_lib.auth import require_auth
+
+    require_auth()
+
     st.title("Autism Assistant")
     st.caption(
         "Semantic labeling & gap analysis for MentalChat16K × autism facts (A–G). "

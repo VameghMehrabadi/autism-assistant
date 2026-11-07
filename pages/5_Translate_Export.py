@@ -12,6 +12,10 @@ from export_for_translation import write_export
 from ui_lib.widgets import persian_dataset_ready, render_limit_input
 
 st.set_page_config(page_title="Translate / Export", layout="wide")
+
+from ui_lib.auth import require_auth  # noqa: E402  (gate before any content)
+
+require_auth()
 st.title("Translate / Export")
 st.caption(
     "Export English MentalChat16K utterances, then translate with GPT-4+ "

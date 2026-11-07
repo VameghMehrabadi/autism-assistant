@@ -11,6 +11,10 @@ import config
 from ui_lib.display import list_output_runs, render_gap_summary, show_file_if_exists
 
 st.set_page_config(page_title="Results", layout="wide")
+
+from ui_lib.auth import require_auth  # noqa: E402  (gate before any content)
+
+require_auth()
 st.title("Results")
 st.caption("Inspect labeled CSVs, gap reports, and comparison summaries.")
 st.caption(

@@ -1,8 +1,14 @@
+# Issue #12 — network isolation defaults.
+# address = "localhost": local launches (streamlit run / launch_ui.*) bind to
+# the loopback interface only — the app is NOT reachable from other machines.
+# Inside Docker the image CMD overrides this with --server.address=0.0.0.0
+# (container-internal, required for Docker port forwarding); the HOST-side
+# published address stays 127.0.0.1 by default (docker-compose.yml).
 [server]
 headless = true
-address = "0.0.0.0"
+address = "localhost"
 port = 8501
-enableCORS = false
+enableCORS = true
 enableXsrfProtection = true
 
 [browser]
