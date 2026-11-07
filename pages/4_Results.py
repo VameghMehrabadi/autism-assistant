@@ -8,7 +8,13 @@ import pandas as pd
 import streamlit as st
 
 import config
-from ui_lib.display import list_output_runs, render_gap_summary, show_file_if_exists
+from ui_lib.display import (
+    list_output_runs,
+    preview_dataframe,
+    render_gap_summary,
+    render_record_reveal,
+    show_file_if_exists,
+)
 
 st.set_page_config(page_title="Results", layout="wide")
 st.title("Results")
@@ -17,7 +23,61 @@ st.caption(
     "⚠️ Research use only — labels are similarity heuristics, not diagnoses."
 )
 
-tab_single, tab_compare = st.tabs(["Single runs", "Comparisons"])
+tab_single, tab_compare, tab_retention = st.tabs(
+    ["Single runs", "Comparisons", "Retention & cleanup"]
+)
+
+with tab_retention:
+    # Issue #10 — explicit, whitelist-based run-output cleanup.
+    from retention import (  # noqa: E402
+        RetentionError,
+        execute_run_cleanup,
+        list_run_locations,
+        plan_run_cleanup,
+    )
+
+    st.caption(
+        "Default policy: temporary generated raw run artifacts are kept "
+        "for **30 days** — a documented default, NOT an enforced "
+        "mechanism. Deletion here is always explicit and manual; original "
+        "datasets, other runs, caches, model weights and gold data are "
+        "never touched."
+    )
+    locations = list_run_locations()
+    if not locations:
+        st.info("No cleanup-eligible artifacts found.")
+    else:
+        location = st.selectbox("Run location", locations)
+        if st.button("Preview deletions"):
+            try:
+                plan = plan_run_cleanup(location)
+            except RetentionError as exc:
+                st.error(f"Refused: {exc}")
+                plan = None
+            if plan is not None:
+                if not plan.candidates:
+                    st.info("Nothing to delete (already clean).")
+                for cand in plan.candidates:
+                    st.markdown(
+                        f"- would delete `{cand.display}` "
+                        f"({cand.kind}, {cand.size_bytes} bytes)"
+                    )
+                for display_name, reason in plan.skipped:
+                    st.caption(f"skip: {display_name} — {reason}")
+                confirm = st.checkbox(
+                    "I confirm deletion of exactly the files listed above"
+                )
+                if confirm and st.button(
+                    "Delete listed files", type="primary"
+                ):
+                    result = execute_run_cleanup(plan, confirm=True)
+                    st.success(
+                        f"Deleted {result['deleted']} file(s) "
+                        f"(skipped {result['skipped']}, failed "
+                        f"{result['failed']}). Metadata-only audit record "
+                        "written to outputs/logs/deletion_audit.jsonl."
+                    )
+                    st.rerun()
 
 with tab_single:
     runs = list_output_runs(config.OUTPUT_DIR)
@@ -49,7 +109,16 @@ with tab_single:
         if labeled.exists():
             st.subheader("Labeled samples")
             df = pd.read_csv(labeled)
-            st.dataframe(df.head(100), use_container_width=True)
+            # Issue #10 — conversation previews truncated by default; the
+            # full text is revealed one record at a time, explicitly.
+            st.caption(
+                "Conversation previews are truncated by default — a "
+                "privacy affordance, not a security boundary."
+            )
+            st.dataframe(
+                preview_dataframe(df.head(100)), use_container_width=True
+            )
+            render_record_reveal(df.head(100))
             st.download_button(
                 "Download labeled.csv",
                 data=labeled.read_bytes(),
