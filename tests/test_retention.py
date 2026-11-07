@@ -49,6 +49,8 @@ def _make_roots(tmp_path: Path) -> tuple[Path, Path]:
 def _anchor_roots(monkeypatch: pytest.MonkeyPatch, out_dir: Path, data_dir: Path):
     monkeypatch.setattr(config, "OUTPUT_DIR", out_dir)
     monkeypatch.setattr(config, "DATA_DIR", data_dir)
+    # pages/4 resolves run folders against config.ROOT — anchor it too
+    monkeypatch.setattr(config, "ROOT", out_dir.parent)
 
 
 def _make_run(out_dir: Path, name: str, *, with_unknown: bool = False) -> Path:
@@ -477,3 +479,141 @@ def test_no_conversation_text_retained_in_session_state():
 
     src = Path(display_mod.__file__).read_text(encoding="utf-8")
     assert "session_state" not in src
+
+
+# --------------------------------------------------------------------------
+# PR #38 audit fixes — orphan sidecars + UI workflow regression
+# --------------------------------------------------------------------------
+
+
+def test_orphan_sidecar_detected_and_removed(tmp_path, monkeypatch):
+    """Audit fix: the export is already gone while its exclusively-paired
+    sidecar remains — the orphan is planned as a sidecar and removed
+    instead of being left as a stale reference."""
+    out_dir, data_dir = _make_roots(tmp_path)
+    _anchor_roots(monkeypatch, out_dir, data_dir)
+    sidecar = data_dir / "mentalchat16k_en_for_translation.export_meta.json"
+    sidecar.write_text('{"complete": true}', encoding="utf-8")
+
+    plan = plan_run_cleanup("translation-artifacts")
+    displays = [c.display for c in plan.candidates]
+    assert displays == [
+        "mentalchat16k_en_for_translation.export_meta.json"
+    ]
+    assert all(c.kind == "sidecar" for c in plan.candidates)
+    result = execute_run_cleanup(plan, confirm=True)
+    assert result["deleted"] == 1
+    assert not sidecar.exists()
+    # idempotent: the repeat is a clean no-op
+    repeat = execute_run_cleanup(
+        plan_run_cleanup("translation-artifacts"), confirm=True
+    )
+    assert repeat["deleted"] == 0
+
+
+def test_ambiguous_sidecar_is_never_deleted(tmp_path, monkeypatch):
+    """A non-regular file occupying the sidecar path (here: a directory) is
+    ambiguous — it is reported for manual review, never deleted."""
+    out_dir, data_dir = _make_roots(tmp_path)
+    _anchor_roots(monkeypatch, out_dir, data_dir)
+    odd = data_dir / "mentalchat16k_en_for_translation.export_meta.json"
+    odd.mkdir()
+    other = data_dir / "mentalchat16k_fa.jsonl"
+    other.write_text("synthetic\n", encoding="utf-8")
+
+    plan = plan_run_cleanup("translation-artifacts")
+    assert all(
+        "export_meta" not in c.display for c in plan.candidates
+    )
+    assert any("not a regular file" in reason for _, reason in plan.skipped)
+    execute_run_cleanup(plan, confirm=True)
+    assert odd.is_dir()  # untouched
+    assert not other.exists()  # the unambiguous artifact was cleaned
+
+
+def test_paired_sidecar_symlink_escape_skipped(tmp_path, monkeypatch):
+    out_dir, data_dir = _make_roots(tmp_path)
+    _anchor_roots(monkeypatch, out_dir, data_dir)
+    (data_dir / "mentalchat16k_fa.jsonl").write_text("synthetic\n",
+                                                     encoding="utf-8")
+    outside = tmp_path / "outside_meta.json"
+    outside.write_text("precious", encoding="utf-8")
+    sidecar = data_dir / "mentalchat16k_fa.export_meta.json"
+    try:
+        sidecar.symlink_to(outside)
+    except OSError:
+        pytest.skip("symlink creation not permitted on this host")
+
+    plan = plan_run_cleanup("translation-artifacts")
+    assert all("export_meta" not in c.display for c in plan.candidates)
+    execute_run_cleanup(plan, confirm=True)
+    assert outside.exists()  # symlink target never touched
+
+
+def test_results_page_cleanup_tab_uses_session_state_workflow():
+    """Structural lock (supplements the AppTest): confirmation controls
+    must not be nested inside the Preview-click guard, and the pending
+    location must be snapshotted into session state."""
+    src = (Path(__file__).resolve().parents[1] / "pages" / "4_Results.py"
+           ).read_text(encoding="utf-8")
+    tab_block = src.split('with tab_retention:')[1]
+    preview_idx = tab_block.index('if st.button("Preview deletions")')
+    confirm_idx = tab_block.index('confirm = st.checkbox(')
+    delete_idx = tab_block.index('"Delete listed files"')
+    # the confirm/delete controls live AFTER the preview guard block ends,
+    # gated on the snapshotted pending location instead
+    pending_idx = tab_block.index('pending = st.session_state.get(')
+    assert preview_idx < pending_idx < confirm_idx < delete_idx
+    assert 'st.session_state["cleanup_pending_location"] = location' in (
+        tab_block
+    )
+
+
+def test_ui_cleanup_flow_app_test(tmp_path, monkeypatch):
+    """AppTest regression for the audit finding: after the Preview rerun,
+    the confirmation checkbox and Delete button must still exist, and the
+    Delete click must reach the existing retention implementation."""
+    from streamlit.testing.v1 import AppTest
+
+    out_dir, data_dir = _make_roots(tmp_path)
+    _anchor_roots(monkeypatch, out_dir, data_dir)
+    _make_run(out_dir, "ui_run")
+
+    page = Path(__file__).resolve().parents[1] / "pages" / "4_Results.py"
+    at = AppTest.from_file(str(page), default_timeout=30)
+    at.run()
+
+    # select the synthetic run and click Preview
+    selectbox = next(
+        sb for sb in at.selectbox if sb.label == "Run location"
+    )
+    selectbox.set_value("ui_run")
+    at.run()
+    next(
+        b for b in at.button if b.label == "Preview deletions"
+    ).click()
+    at.run()
+
+    # REGRESSION: controls persist after the Preview rerun
+    assert any(
+        "Pending cleanup review" in md.value for md in at.markdown
+    )
+    checkbox = next(
+        cb for cb in at.checkbox if "I confirm deletion" in cb.label
+    )
+    checkbox.check()
+    at.run()  # rerun with confirm=True -> the Delete button now renders
+    next(
+        b for b in at.button if b.label == "Delete listed files"
+    ).click()
+    at.run()
+
+    # the existing retention implementation actually executed
+    assert not (out_dir / "ui_run" / "labeled.csv").exists()
+    assert "cleanup_pending_location" not in at.session_state
+    result_state = at.session_state.get("cleanup_last_result")
+    assert result_state is not None and result_state["deleted"] == 5
+    assert result_state["outcome"] == "complete"
+    assert any(
+        "Deleted 5 file(s)" in s.value for s in at.success
+    )

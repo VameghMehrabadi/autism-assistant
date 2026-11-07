@@ -218,7 +218,36 @@ def plan_run_cleanup(location: str) -> CleanupPlan:
         for name in TRANSLATION_ARTIFACT_NAMES:
             path = target / name
             if not path.exists():
-                skipped.append((name, "already absent"))
+                # Audit fix (PR #38): the export may already be gone while
+                # its exclusively-paired sidecar remains — include the
+                # orphan sidecar instead of leaving a stale reference.
+                # Pairing is exact (with_suffix), never a loose match; a
+                # non-regular or escaping sidecar is skipped, not deleted.
+                sidecar = path.with_suffix(SIDECAR_SUFFIX)
+                if not sidecar.exists():
+                    skipped.append((name, "already absent"))
+                elif sidecar.is_symlink() or not sidecar.is_file():
+                    skipped.append(
+                        (
+                            sidecar.name,
+                            "orphan sidecar is not a regular file — "
+                            "manual review",
+                        )
+                    )
+                else:
+                    sidecar_candidate = _candidate_for(
+                        sidecar, base, "sidecar"
+                    )
+                    if sidecar_candidate is None:
+                        skipped.append(
+                            (
+                                sidecar.name,
+                                "orphan sidecar resolves outside the "
+                                "storage root",
+                            )
+                        )
+                    else:
+                        candidates.append(sidecar_candidate)
                 continue
             candidate = _candidate_for(path, base, "run_artifact")
             if candidate is None:
@@ -227,10 +256,22 @@ def plan_run_cleanup(location: str) -> CleanupPlan:
             candidates.append(candidate)
             sidecar = path.with_suffix(SIDECAR_SUFFIX)
             if sidecar.exists():
+                if sidecar.is_symlink() or not sidecar.is_file():
+                    skipped.append(
+                        (
+                            sidecar.name,
+                            "sidecar is not a regular file — manual review",
+                        )
+                    )
+                    continue
                 sidecar_candidate = _candidate_for(
                     sidecar, base, "sidecar"
                 )
-                if sidecar_candidate is not None:
+                if sidecar_candidate is None:
+                    skipped.append(
+                        (sidecar.name, "resolves outside the storage root")
+                    )
+                else:
                     candidates.append(sidecar_candidate)
         if not candidates:
             skipped.append(("(data/)", "no translation artifacts present"))

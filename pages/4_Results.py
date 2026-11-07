@@ -29,6 +29,14 @@ tab_single, tab_compare, tab_retention = st.tabs(
 
 with tab_retention:
     # Issue #10 — explicit, whitelist-based run-output cleanup.
+    # Audit fix (PR #38): the confirmation checkbox and Delete button must
+    # NOT live inside the "Preview deletions" click guard — Streamlit drops
+    # clicks on widgets that vanish on the next rerun, which made the UI
+    # deletion unreachable. Instead: Preview snapshots the selected location
+    # into session state (workflow state only — never conversation text);
+    # the pending plan is REBUILT from that snapshot on every rerun with the
+    # same candidate-selection logic, so a changed file set is displayed as
+    # an updated scope and must be re-confirmed before deletion.
     from retention import (  # noqa: E402
         RetentionError,
         execute_run_cleanup,
@@ -43,20 +51,50 @@ with tab_retention:
         "datasets, other runs, caches, model weights and gold data are "
         "never touched."
     )
+
+    last_result = st.session_state.get("cleanup_last_result")
+    if last_result:
+        st.success(
+            f"Deleted {last_result['deleted']} file(s) "
+            f"(skipped {last_result['skipped']}, failed "
+            f"{last_result['failed']}). Metadata-only audit record "
+            "written to outputs/logs/deletion_audit.jsonl."
+        )
+
     locations = list_run_locations()
     if not locations:
         st.info("No cleanup-eligible artifacts found.")
     else:
         location = st.selectbox("Run location", locations)
         if st.button("Preview deletions"):
+            # snapshot the selected location — the pending review survives
+            # reruns and cannot silently switch to a different location
+            st.session_state["cleanup_pending_location"] = location
+            st.session_state.pop("cleanup_last_result", None)
+
+        pending = st.session_state.get("cleanup_pending_location")
+        if pending:
+            st.markdown(f"**Pending cleanup review for:** `{pending}`")
+            if st.button("Discard pending preview"):
+                st.session_state.pop("cleanup_pending_location", None)
+                st.rerun()
+            plan = None
+            plan_error = None
             try:
-                plan = plan_run_cleanup(location)
+                plan = plan_run_cleanup(pending)
             except RetentionError as exc:
-                st.error(f"Refused: {exc}")
-                plan = None
-            if plan is not None:
-                if not plan.candidates:
-                    st.info("Nothing to delete (already clean).")
+                plan_error = str(exc)
+            if plan_error:
+                # refused — show the reason without killing the other tabs
+                st.error(f"Refused: {plan_error}")
+            elif not plan.candidates:
+                st.info("Nothing to delete (already clean).")
+            else:
+                st.caption(
+                    "The list below reflects the files currently on disk "
+                    "— review it before confirming. Preview → confirm → "
+                    "delete."
+                )
                 for cand in plan.candidates:
                     st.markdown(
                         f"- would delete `{cand.display}` "
@@ -71,11 +109,9 @@ with tab_retention:
                     "Delete listed files", type="primary"
                 ):
                     result = execute_run_cleanup(plan, confirm=True)
-                    st.success(
-                        f"Deleted {result['deleted']} file(s) "
-                        f"(skipped {result['skipped']}, failed "
-                        f"{result['failed']}). Metadata-only audit record "
-                        "written to outputs/logs/deletion_audit.jsonl."
+                    st.session_state["cleanup_last_result"] = result
+                    st.session_state.pop(
+                        "cleanup_pending_location", None
                     )
                     st.rerun()
 
