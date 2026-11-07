@@ -18,6 +18,12 @@ from ui_lib.widgets import (
 )
 
 st.set_page_config(page_title="Run Pipeline", layout="wide")
+
+from ui_lib.widgets import (  # noqa: E402  (mode caption first)
+    render_storage_security_banner,
+)
+
+render_storage_security_banner(compact=True)
 st.title("Run Pipeline")
 st.caption("One model × one fact language × one dataset → labeled CSV + gap report.")
 st.caption(

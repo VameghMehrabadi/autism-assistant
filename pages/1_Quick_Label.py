@@ -13,6 +13,12 @@ from ui_lib.widgets import (
 )
 
 st.set_page_config(page_title="Quick Label", layout="wide")
+
+from ui_lib.widgets import (  # noqa: E402  (mode caption first)
+    render_storage_security_banner,
+)
+
+render_storage_security_banner(compact=True)
 st.title("Quick Label")
 st.caption("Score one utterance against autism fact categories.")
 st.caption(

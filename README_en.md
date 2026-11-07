@@ -91,6 +91,40 @@ UI: [http://localhost:8501](http://localhost:8501). Models download on first use
 docker compose run --rm pipeline main.py --limit 50 --model minilm --fact-lang fa --dataset en
 ```
 
+## Storage security / encryption at rest (Issue #11)
+
+**Architecture: operator-managed encrypted host storage.** Every file the
+pipeline writes (datasets, labels, translation outputs, QA review files,
+reports, charts, logs, caches, temp/backup files) lives under `data/`,
+`outputs/` or the cache root — so OS-level volume encryption (BitLocker /
+LUKS / FileVault) covers all of them. The application deliberately contains
+**no crypto code**; it cannot detect disk encryption and never pretends to.
+
+```bash
+# research mode (default — current workflow, explicit warnings):
+python main.py --limit 50
+# patient-data mode (fails closed without the declaration):
+DATA_STORAGE_MODE=patient-data STORAGE_PROTECTION_DECLARATION=bitlocker python main.py --limit 50
+```
+
+| Mode | Behavior |
+|------|----------|
+| `research` (default) | Files written **unencrypted** unless the operator protects the volume; UI banners + CLI lines warn; unsuitable for PHI without separate, documented storage protection |
+| `patient-data` | Requires `STORAGE_PROTECTION_DECLARATION` (`bitlocker` \| `luks` \| `filevault` \| `encrypted-volume`) — an **operator declaration, not an application-verified property**; missing/invalid configuration fails closed (exit code 2 / UI refuses content) |
+
+- Protected paths (encrypt the volumes behind them): `data/`, `outputs/`
+  (incl. `outputs/logs`), the cache root (`AUTISM_CACHE_DIR`), and any HF
+  cache location (`HF_HOME`/`HF_HUB_CACHE` or `~/.cache/huggingface`).
+- Docker: bind mounts inherit the host filesystem; **named volumes are NOT
+  encrypted by Docker** (they live under the daemon's root, e.g.
+  `/var/lib/docker/volumes`) — protect that host filesystem. Model-weight
+  caching is not patient-data protection.
+- OS verification is the operator's job: `manage-bde -status <drive>:`
+  (Windows), `cryptsetup status` (Linux), `fdesetup status` (macOS).
+- Existing unencrypted files are never auto-migrated; enable encryption on
+  the volume or move copies manually. Git exclusion (`.gitignore`) is not
+  encryption. No HIPAA/clinical-readiness claim is made or implied.
+
 ## Translate dataset to Persian
 
 ```bash

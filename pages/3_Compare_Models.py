@@ -20,6 +20,12 @@ from ui_lib.display import render_gap_summary
 from ui_lib.widgets import persian_dataset_ready, render_limit_input
 
 st.set_page_config(page_title="Compare Models", layout="wide")
+
+from ui_lib.widgets import (  # noqa: E402  (mode caption first)
+    render_storage_security_banner,
+)
+
+render_storage_security_banner(compact=True)
 st.title("Compare Models")
 st.caption(
     "Five runs — all use Persian facts × {English, English, English, Persian, Persian} "

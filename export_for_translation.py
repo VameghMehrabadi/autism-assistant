@@ -125,6 +125,12 @@ def write_export(
 
 
 def main(argv: list[str] | None = None) -> int:
+    from storage_security import storage_security_exit_code
+
+    rc = storage_security_exit_code()
+    if rc:
+        return rc
+
     args = parse_args(argv)
     limit = args.limit if args.limit is not None else 0  # default: full dataset
     if limit is not None and limit <= 0:

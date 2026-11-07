@@ -86,3 +86,103 @@ files yet — operators must apply their own data-governance rules.
   review before any external release of derived datasets.
 - Docker image build not exercised in this environment (daemon unavailable);
   compose configuration is YAML-validated.
+
+## 8. Encryption at rest & storage security (Issue #11 — reviewed 2026-11-07)
+
+### Architectural decision
+
+**Protection mechanism: operator-managed encrypted host storage** (BitLocker
+/ LUKS / FileVault / an encrypted volume) — not application-level crypto.
+Rationale: every file the pipeline writes lands under `config.DATA_DIR`,
+`config.OUTPUT_DIR` or `config.CACHE_DIR` (verified write-path inventory:
+labeled CSVs, score matrices, gap/comparison reports, charts, translation
+outputs + checkpoints + error logs, QA review files, export sidecars,
+sanitized JSON logs, embedding-cache chunks), so OS-level encryption covers
+**all** of them — including temporary and backup files, which are written
+next to their outputs on the same volume — without touching any read/write
+path. Application-level authenticated encryption was evaluated and
+**deliberately not implemented**: covering the incremental JSONL
+checkpoint/resume flow, torn-output repair, numpy caches and chart output
+safely would require a storage-architecture rewrite, and a partial crypto
+layer would falsely imply PHI-grade protection. No fake crypto layer was
+added to satisfy the issue's application-level test list.
+
+**Four-way distinction:**
+
+| Kind | Status |
+|---|---|
+| Encryption implemented by this application | **None** — by design |
+| Encryption provided by the host OS | Available, **not detectable** by this app |
+| Operator-declared external protection | The `patient-data` mode's basis |
+| Encryption actually verified by the app | **Nothing — the app cannot verify disk state, and does not attempt to** |
+
+### Storage-security modes (`DATA_STORAGE_MODE`)
+
+- **`research` (default):** existing workflow, unchanged. The UI (Home
+  banner + per-page captions) and every CLI entry point (`main.py`,
+  `compare_runs.py`, `export_for_translation.py`, `translate_dataset.py`,
+  `translation_qa.py`) print the effective mode and warn that files are
+  stored **unencrypted** unless the operator protects the volume — and that
+  this is unsuitable for PHI unless the operator separately establishes and
+  documents equivalent protection.
+- **`patient-data`:** requires `STORAGE_PROTECTION_DECLARATION` naming the
+  mechanism (`bitlocker` | `luks` | `filevault` | `encrypted-volume`). The
+  declaration is an **operator-declared prerequisite — not an
+  application-verified property**. Missing/invalid declaration or an
+  invalid mode value **fails closed** (CLI exit code 2; UI refuses to
+  render content). No silent downgrade exists.
+- Invalid values in either variable are rejected in every mode.
+
+### Path coverage requirements (operator checklist)
+
+The encryption must cover the physical volumes behind:
+
+1. `<project>/data/` — datasets, exports, translation outputs, QA review files
+2. `<project>/outputs/` — labeled.csv, scores, reports, charts, logs
+3. the cache root (`AUTISM_CACHE_DIR`, default `D:\autism_assistant_cache`
+   or `<project>/.cache`) — embedding cache + model/dataset caches
+4. **any HF cache outside the project** — on the host, `load_dataset` uses
+   `HF_HOME`/`HF_HUB_CACHE` if set, else the user profile default
+   (`~/.cache/huggingface`); set `HF_HOME` onto the encrypted volume or
+   include the default location in the protected volume.
+
+### OS setup & verification guidance (operator actions — the app cannot do these)
+
+- **Windows (BitLocker):** enable per volume (`manage-bde -on <drive>:`),
+  verify with `manage-bde -status <drive>:`; see Microsoft BitLocker docs.
+- **Linux (LUKS/dm-crypt):** encrypt the volume/block device
+  (`cryptsetup luksFormat` / `luksOpen`), verify with `cryptsetup status`
+  and `lsblk -f`; see dm-crypt wiki.
+- **macOS (FileVault):** System Settings → Privacy & Security → FileVault,
+  verify with `fdesetup status`; see Apple Platform Security.
+- **Docker:** bind mounts (`./data`, `./outputs`) inherit the **host**
+  filesystem — encrypt the host volume that hosts them. Named volumes
+  (e.g. `model_cache`) physically live under the Docker daemon's root
+  (typically `/var/lib/docker/volumes/...` on Linux) — they are **not**
+  encrypted by Docker; they are protected only when that host filesystem
+  is. Model-weight caching is not patient-data protection. Temporary
+  files/backups (e.g. translation `.corrupt-*` files) are written next to
+  their outputs — same volume, same coverage. Backups made outside these
+  volumes must be encrypted separately by the operator.
+
+### Existing data & migration
+
+No automatic migration: existing unencrypted files are left untouched.
+To protect existing data, either enable encryption on the volume holding
+it (OS-level, transparent to existing files) or move copies onto an
+encrypted volume manually. Document any such procedure locally; this
+repository performs none.
+
+### Limitations & remaining risks
+
+- Disk encryption protects **at rest** only; once the volume is
+  unlocked/mounted, any process running with the user's privileges can read
+  the files. It does not protect against a compromised OS session.
+- **No HIPAA compliance, clinical readiness, or complete PHI protection is
+  claimed or implied** — a login screen (Issue #12) plus disk encryption do
+  not make this multi-tenant or clinical-grade.
+- Git exclusion rules (`.gitignore`) prevent commits; they are **not**
+  encryption.
+- The application's verification of any of the above is **zero by
+  design**; everything in this section beyond the mode/declaration
+  enforcement is operator responsibility.

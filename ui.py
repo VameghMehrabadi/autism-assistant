@@ -43,6 +43,11 @@ def main() -> None:
         initial_sidebar_state="expanded",
     )
 
+    # Issue #11 — effective storage-security mode (full banner on Home).
+    from ui_lib.widgets import render_storage_security_banner
+
+    render_storage_security_banner()
+
     st.title("Autism Assistant")
     st.caption(
         "Semantic labeling & gap analysis for MentalChat16K × autism facts (A–G). "

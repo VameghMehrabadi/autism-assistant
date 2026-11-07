@@ -360,6 +360,12 @@ def verify_alignment(run_ids: list[str] | None = None) -> dict:
 
 
 def main() -> int:
+    from storage_security import storage_security_exit_code
+
+    rc = storage_security_exit_code()
+    if rc:
+        return rc
+
     args = parse_args()
     if args.verify_alignment:
         report = verify_alignment()

@@ -11,6 +11,12 @@ import config
 from ui_lib.display import list_output_runs, render_gap_summary, show_file_if_exists
 
 st.set_page_config(page_title="Results", layout="wide")
+
+from ui_lib.widgets import (  # noqa: E402  (mode caption first)
+    render_storage_security_banner,
+)
+
+render_storage_security_banner(compact=True)
 st.title("Results")
 st.caption("Inspect labeled CSVs, gap reports, and comparison summaries.")
 st.caption(

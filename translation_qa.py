@@ -346,6 +346,12 @@ def print_summary(report: dict[str, Any]) -> None:
 
 
 def main() -> int:
+    from storage_security import storage_security_exit_code
+
+    rc = storage_security_exit_code()
+    if rc:
+        return rc
+
     parser = argparse.ArgumentParser(description="Validate the translated Persian dataset.")
     parser.add_argument("--file", type=str,
                         default=str(config.PERSIAN_DATASET_PATH))
