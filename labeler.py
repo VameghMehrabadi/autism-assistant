@@ -25,11 +25,11 @@ from typing import Any
 
 import numpy as np
 import torch
-from sentence_transformers import SentenceTransformer
 
 import config
 from embedding_cache import EmbeddingCache
 from facts import CATEGORY_KEYS, get_prototypes
+from model_loader import format_offline_state, load_sentence_transformer
 from privacy_log import get_logger, log_event
 
 logger = get_logger("autism.labeler")
@@ -161,12 +161,18 @@ class SemanticLabeler:
             print(
                 f"[labeler] Loading '{self.model_name}' "
                 f"(key={self.model_key}, prefix={self.prefix_mode}, "
-                f"fact_lang={self.fact_lang}) on {device} ..."
+                f"fact_lang={self.fact_lang}) on {device} "
+                f"[weights cache: {config.MODEL_CACHE_DIR}; "
+                f"offline: {format_offline_state()}] ..."
             )
-            self.model = SentenceTransformer(
+            # Single weights-cache configuration (Issue #14): missing or
+            # offline-unavailable weights raise an actionable
+            # ModelWeightsMissingError naming model, cache and prefetch cmd.
+            self.model = load_sentence_transformer(
                 self.model_name,
+                model_key=self.model_key,
                 device=device,
-                cache_folder=str(config.CACHE_DIR),
+                cache_folder=str(config.MODEL_CACHE_DIR),
             )
             if self.max_seq_tokens:
                 self.model.max_seq_length = int(self.max_seq_tokens)
