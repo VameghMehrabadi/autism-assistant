@@ -73,3 +73,10 @@ Chronological record of autonomous development phases. Detailed evidence lives i
 - Docker compose: `ZAI_API_KEY` / `ZHIPU_API_KEY` / `ZAI_BASE_URL` forwarded to both services; **fixed pre-existing YAML typo** (`SENTENCE_TRANSFORMERS_HOME=` → `:` in the ui service); compose YAML-validated.
 - Research-use disclaimers added to Quick Label and Compare Models pages.
 - Consolidated `reports/PRIVACY_AND_SECURITY.md`; DEVELOPMENT_LOG extended; final report refreshed.
+
+## Issue #15 (comparability) — Encoder confidence & raw score distribution
+- Fixed Persian interpretation sentence (درصد اطمینان نشان‌دهنده سهم امتیازهای شباهت کسینوسی بالاتر از آستانه است و معادل دقت مدل نیست.) now sits next to every Confident% — per-run gap Markdown, five-way comparison report, and the Compare Models page (`CONFIDENCE_NOT_ACCURACY_FA`/`_EN` in `gap_analysis.py`).
+- Raw top-score histogram per encoder (`outputs/comparison/score_distributions.png`): identical bins and shared x-axis for all models, dashed threshold line at 0.35, per-run threshold pass rate in each panel title; built from persisted `labeled.csv` raw scores (`plot_score_distributions`, `load_run_top_scores`).
+- Comparison report gains a "Raw score distribution per encoder (uncalibrated)" section: n / mean / median / p05 / p95 / share ≥ threshold per run, automatic **threshold-saturation callout** when p05 ≥ threshold (bge-m3 and e5-large flagged on the real runs; MiniLM's threshold still discriminates), and an explicit no-winner rule — no run is ranked or declared best on these percentages (guard test).
+- `top_score_stats` extended with p05/p95; legacy gap reports without stats get them derived from the persisted raw `top_score` column (marked as derived) — dashes when no raw data exists, never silently backfilled.
+- UI snapshot test locks the warning into the Compare Models page; full suite 259 tests green; report regenerated from runs 1–3 (n=16,005 each) with the saturation visible.

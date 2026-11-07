@@ -169,7 +169,14 @@ python compare_runs.py --skip-existing
 Outputs:
 
 - Single run → `outputs/` (or `--out` dir): `labeled.csv`, `scores.npy`, `gap_analysis.*`, `run_meta.json`
-- Comparison → `outputs/comparison/`: per-run folders + `comparison_report.md`, `comparison_summary.csv`, `comparison_shares.png`
+- Comparison → `outputs/comparison/`: per-run folders + `comparison_report.md`, `comparison_summary.csv`, `comparison_shares.png`, `score_distributions.png`
+
+> **Reading the Confident% column (Issue #15):** it is the share of raw cosine
+> similarity scores above the threshold — it is **not** model accuracy, and
+> cosine scales differ per encoder (e5-large concentrates near 0.80, so the
+> shared 0.35 threshold passes everything). `comparison_report.md` carries the
+> fixed Persian/English warning, per-encoder raw-score histograms on shared
+> axes, and no "best model" ranking.
 
 ## Tests / CI
 
