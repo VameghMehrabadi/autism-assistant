@@ -27,6 +27,18 @@ from labeler import parse_labels
 # fact_id → category, for mapping matched prototype identifiers to categories
 _FACT_CATEGORY: dict[int, str] = {f.id: f.category for f in FACTS}
 
+# Issue #15 — fixed interpretation sentence shown next to every confident /
+# uncertain percentage (gap reports, comparison report, Compare Models page).
+# The confident rate is a cosine-threshold pass rate, never model accuracy.
+CONFIDENCE_NOT_ACCURACY_FA = (
+    "درصد اطمینان نشان‌دهنده سهم امتیازهای شباهت کسینوسی بالاتر از آستانه است "
+    "و معادل دقت مدل نیست."
+)
+CONFIDENCE_NOT_ACCURACY_EN = (
+    "Confident % is the share of raw cosine similarity scores above the "
+    "threshold — it is not model accuracy."
+)
+
 
 def _category_label(cat: str) -> str:
     return f"{cat}. {CATEGORIES[cat]['title_en']}"
@@ -107,8 +119,10 @@ def build_report(df: pd.DataFrame, scores: np.ndarray,
                 "median": round(float(margins.median()), 4),
                 "min": round(float(margins.min()), 4),
             }
-    matched_counts: dict[str, int] = {c: 0 for c in cat_keys}
+    # Issue #19: matched_count is None (not zero) when the source CSV lacks
+    # matched_fact_ids — a missing column is not a genuine zero-match result.
     if "matched_fact_ids" in df.columns:
+        matched_counts: dict[str, int] = {c: 0 for c in cat_keys}
         for raw in df["matched_fact_ids"]:
             if not isinstance(raw, str) or not raw.strip():
                 continue  # NaN / empty cells
@@ -116,8 +130,11 @@ def build_report(df: pd.DataFrame, scores: np.ndarray,
                 fact_id = part.strip().split(":")[0]  # entries look like "12:fa"
                 if fact_id.isdigit() and int(fact_id) in _FACT_CATEGORY:
                     matched_counts[_FACT_CATEGORY[int(fact_id)]] += 1
-    for c in cat_keys:
-        per_cat[c]["matched_count"] = matched_counts[c]
+        for c in cat_keys:
+            per_cat[c]["matched_count"] = matched_counts[c]
+    else:
+        for c in cat_keys:
+            per_cat[c]["matched_count"] = None
 
     # رتبه‌بندی ضعیف→قوی: top-1، سپس پوشش multi-label، سپس شباهت سراسری
     ranking = sorted(
@@ -141,8 +158,10 @@ def build_report(df: pd.DataFrame, scores: np.ndarray,
         top_score_stats = {
             "mean": round(float(top_scores_f.mean()), 4),
             "median": round(float(top_scores_f.median()), 4),
+            "p05": round(float(top_scores_f.quantile(0.05)), 4),
             "p25": round(float(top_scores_f.quantile(0.25)), 4),
             "p75": round(float(top_scores_f.quantile(0.75)), 4),
+            "p95": round(float(top_scores_f.quantile(0.95)), 4),
             "min": round(float(top_scores_f.min()), 4),
             "max": round(float(top_scores_f.max()), 4),
         }
@@ -189,6 +208,9 @@ def render_markdown(report: dict) -> str:
         f"- آستانه‌ی اعتماد / threshold: **{report['threshold']}**",
         f"- نمونه‌های بااعتماد / confident: "
         f"**{report['n_confident']} ({report['confident_rate']:.1%})**",
+        "",
+        f"> ⚠️ {CONFIDENCE_NOT_ACCURACY_FA}",
+        f"> {CONFIDENCE_NOT_ACCURACY_EN}",
         "",
         "## Distribution per category (top-1 and multi-label)",
         "",
