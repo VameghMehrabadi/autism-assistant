@@ -43,9 +43,11 @@ def main() -> None:
         initial_sidebar_state="expanded",
     )
 
-    # Issue #11 — effective storage-security mode (full banner on Home).
+    # Deployment gate runs before any content. Storage mode banner follows.
+    from ui_lib.auth import require_auth
     from ui_lib.widgets import render_storage_security_banner
 
+    require_auth()
     render_storage_security_banner()
 
     st.title("Autism Assistant")

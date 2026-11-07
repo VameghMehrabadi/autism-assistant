@@ -9,14 +9,28 @@ import streamlit as st
 import config
 from data_loader import load_samples_en
 from export_for_translation import write_export
-from ui_lib.widgets import persian_dataset_ready, render_limit_input
+from license_guard import (
+    ASSESSMENT_REPORT,
+    LICENSE_STATUS,
+    LicenseGuardError,
+    classify_destination,
+)
+from ui_lib.widgets import (
+    NOT_TRANSLATED_EN,
+    NOT_TRANSLATED_FA,
+    dataset_provenance,
+    persian_dataset_ready,
+    render_limit_input,
+)
 
 st.set_page_config(page_title="Translate / Export", layout="wide")
 
+from ui_lib.auth import require_auth  # noqa: E402  (gate before any content)
 from ui_lib.widgets import (  # noqa: E402  (mode caption first)
     render_storage_security_banner,
 )
 
+require_auth()
 render_storage_security_banner(compact=True)
 st.title("Translate / Export")
 st.caption(
@@ -43,6 +57,25 @@ st.caption(
     "its sidecar metadata and must not be treated as the full dataset."
 )
 
+# Issue #13 — centralized licensing guard: paths outside the project
+# workspace are public distribution destinations and need an explicit
+# acknowledgment while the upstream license status is unclear.
+public_destination = classify_destination(out_path) == "public"
+acknowledge_license = False
+if public_destination:
+    st.warning(
+        f"`{out_path}` is **outside the project workspace** — a public "
+        "distribution destination. MentalChat16K mixes synthetic "
+        "conversations with paraphrased clinical-trial interview "
+        "transcripts; the upstream MIT tag does not by itself authorize "
+        f"derivative redistribution (status: `{LICENSE_STATUS}`, see "
+        f"`{ASSESSMENT_REPORT}`)."
+    )
+    acknowledge_license = st.checkbox(
+        "I acknowledge the unresolved licensing risk "
+        "(--acknowledge-license; this is NOT legal permission)"
+    )
+
 if st.button("Export for translation", type="primary"):
     try:
         lim = int(limit)
@@ -54,6 +87,7 @@ if st.button("Export for translation", type="primary"):
             out_path,
             dataset_total=load_report.dataset_total,
             load_report=load_report,
+            acknowledge_license=acknowledge_license,
         )
         if meta["complete"]:
             st.success(
@@ -66,6 +100,8 @@ if st.button("Export for translation", type="primary"):
                 f"{meta['total_source']} source records → `{out_path}`. "
                 "This file must NOT be treated as the full dataset."
             )
+    except LicenseGuardError as e:
+        st.error(str(e))
     except Exception as e:
         st.exception(e)
 
@@ -122,6 +158,23 @@ status = (
     else "⏳ Persian dataset not found yet"
 )
 st.info(status)
+
+# Issue #25: provenance display — missing/mock/fixture data is always
+# explicitly labeled and never shown as a completed real translation.
+from ui_lib.widgets import NOT_TRANSLATED_EN, NOT_TRANSLATED_FA, dataset_provenance
+
+kind, label = dataset_provenance(config.PERSIAN_DATASET_PATH)
+if kind == "missing":
+    st.warning(
+        f"⚠️ {NOT_TRANSLATED_FA}\n\n{NOT_TRANSLATED_EN} "
+        f"Persian output: `{config.PERSIAN_DATASET_PATH}` — status: **INCOMPLETE**."
+    )
+elif kind == "mock":
+    st.error(f"🚫 {label}\n\n`{config.PERSIAN_DATASET_PATH}`")
+elif kind == "fixture":
+    st.warning(f"⚠️ {label}\n\n`{config.PERSIAN_DATASET_PATH}`")
+else:
+    st.success(f"✅ {label} — `{config.PERSIAN_DATASET_PATH}`")
 
 sample = config.ROOT / "tests" / "fixtures" / "mentalchat16k_fa.sample.jsonl"
 if sample.exists():

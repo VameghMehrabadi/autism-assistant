@@ -9,11 +9,17 @@ import streamlit as st
 
 import config
 from compare_runs import (
+    augment_score_stats,
     build_comparison_table,
     plot_comparison,
+    plot_score_distributions,
     render_comparison_markdown,
     selected_runs,
     summarize_run,
+)
+from gap_analysis import (
+    CONFIDENCE_NOT_ACCURACY_EN,
+    CONFIDENCE_NOT_ACCURACY_FA,
 )
 from main import run_pipeline
 from ui_lib.display import render_gap_summary
@@ -21,10 +27,12 @@ from ui_lib.widgets import persian_dataset_ready, render_limit_input
 
 st.set_page_config(page_title="Compare Models", layout="wide")
 
+from ui_lib.auth import require_auth  # noqa: E402  (gate before any content)
 from ui_lib.widgets import (  # noqa: E402  (mode caption first)
     render_storage_security_banner,
 )
 
+require_auth()
 render_storage_security_banner(compact=True)
 st.title("Compare Models")
 st.caption(
@@ -36,6 +44,9 @@ st.caption(
     "uncalibrated — differences in confident rates partly reflect score-scale "
     "differences, not model quality."
 )
+# Issue #15 — fixed interpretation sentence shown next to every confident /
+# uncertain percentage on this page.
+st.warning(f"**{CONFIDENCE_NOT_ACCURACY_FA}**\n\n{CONFIDENCE_NOT_ACCURACY_EN}")
 
 st.dataframe(
     pd.DataFrame(config.COMPARISON_RUNS)[
@@ -126,6 +137,7 @@ if st.button("Run selected comparisons", type="primary"):
         summaries.append(summarize_run(report, run_cfg))
         with st.expander(f"Result · {run_cfg['id']}", expanded=False):
             render_gap_summary(report)
+    augment_score_stats(summaries)
 
     progress.progress(1.0, text="Writing comparison report…")
     table = build_comparison_table(summaries)
@@ -133,18 +145,28 @@ if st.button("Run selected comparisons", type="primary"):
     json_path = config.COMPARISON_DIR / "comparison_summary.json"
     md_path = config.COMPARISON_DIR / "comparison_report.md"
     chart_path = config.COMPARISON_DIR / "comparison_shares.png"
+    dist_path = config.COMPARISON_DIR / "score_distributions.png"
 
     table.to_csv(csv_path, index=False, encoding="utf-8-sig")
     json_path.write_text(
         json.dumps(summaries, ensure_ascii=False, indent=2), encoding="utf-8"
     )
+    dist_available = plot_score_distributions(summaries, dist_path)
     md_path.write_text(
-        render_comparison_markdown(summaries, table), encoding="utf-8"
+        render_comparison_markdown(
+            summaries, table, score_distributions_available=dist_available
+        ),
+        encoding="utf-8",
     )
     plot_comparison(summaries, chart_path)
 
     st.success(f"Comparison complete → `{config.COMPARISON_DIR}`")
+    # Confident-rate columns below are threshold pass rates, not accuracy.
+    st.warning(f"**{CONFIDENCE_NOT_ACCURACY_FA}**\n\n{CONFIDENCE_NOT_ACCURACY_EN}")
     st.dataframe(table, use_container_width=True)
+    if dist_available and dist_path.exists():
+        st.subheader("Raw score distribution per encoder")
+        st.image(str(dist_path))
     if chart_path.exists():
         st.image(str(chart_path))
     st.markdown(md_path.read_text(encoding="utf-8"))

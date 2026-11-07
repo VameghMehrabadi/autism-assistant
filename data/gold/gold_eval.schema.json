@@ -1,0 +1,150 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Autism Assistant gold evaluation record",
+  "description": "One human-labeled evaluation record. Model-generated labels are forbidden in this file: origin must be 'human' and labeler_id must identify a human labeler. Issue #8: multi-label annotations (final_labels) are supported; exactly one of final_label / final_labels must be present; status marks worklist entries that are not yet gold labels.",
+  "type": "object",
+  "required": [
+    "gold_id",
+    "source_idx",
+    "labeler_id",
+    "origin",
+    "round"
+  ],
+  "properties": {
+    "gold_id": {
+      "type": "string",
+      "pattern": "^gold-[0-9]{4,6}$",
+      "description": "Stable evaluation-set identifier, independent of dataset row order."
+    },
+    "source_idx": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Original MentalChat16K record id (idx) from the export file."
+    },
+    "labeler_id": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 32,
+      "description": "Human labeler identifier (initials or registered id)."
+    },
+    "origin": {
+      "type": "string",
+      "const": "human",
+      "description": "Must be 'human'. Model-generated labels are invalid here."
+    },
+    "round": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2,
+      "description": "Labeling round: 1 = independent, 2 = revision after seeing the other labeler's label."
+    },
+    "first_label": {
+      "type": "string",
+      "enum": [
+        "A",
+        "B",
+        "C",
+        "D",
+        "E",
+        "F",
+        "G",
+        "UNSURE"
+      ],
+      "description": "Round-1 label before any revision."
+    },
+    "final_label": {
+      "type": "string",
+      "enum": [
+        "A",
+        "B",
+        "C",
+        "D",
+        "E",
+        "F",
+        "G",
+        "UNSURE"
+      ],
+      "description": "Final label after revision/adjudication. UNSURE records are excluded from per-category metrics but retained."
+    },
+    "adjudicated": {
+      "type": "boolean",
+      "default": false,
+      "description": "True when a third reviewer resolved a round-2 disagreement."
+    },
+    "confidence": {
+      "type": "string",
+      "enum": [
+        "sure",
+        "leaning",
+        "guess"
+      ],
+      "description": "Labeler's own ordinal certainty — an ordinal self-report, NOT a calibrated probability."
+    },
+    "notes": {
+      "type": "string",
+      "maxLength": 500,
+      "description": "Optional free-text note; must not include other reviewers' identities beyond what labelers consent to."
+    },
+    "labeled_utc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "gold_set_version": {
+      "type": "string",
+      "pattern": "^v[0-9]+$",
+      "description": "Version of the gold set this record belongs to (matches the file suffix)."
+    },
+    "final_labels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "A",
+          "B",
+          "C",
+          "D",
+          "E",
+          "F",
+          "G",
+          "UNSURE"
+        ]
+      },
+      "uniqueItems": true,
+      "description": "Multi-label annotation (Issue #8): every category that substantially applies. An empty list is a deliberate 'no applicable category' annotation. UNSURE must appear alone. Mutually exclusive with final_label."
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "in_progress",
+        "annotated"
+      ],
+      "description": "Worklist status. Only 'annotated' records are gold labels; pending/in_progress records are never counted as gold."
+    },
+    "partition": {
+      "type": "string",
+      "enum": [
+        "gold_calibration",
+        "gold_evaluation"
+      ],
+      "description": "Which gold partition the record belongs to (calibration selects thresholds; evaluation is held out)."
+    },
+    "provenance": {
+      "type": "object",
+      "description": "Selection provenance (record hash, group key, dataset sha256, selection seed, generated_utc)."
+    }
+  },
+  "additionalProperties": false,
+  "oneOf": [
+    {
+      "required": [
+        "final_label"
+      ]
+    },
+    {
+      "required": [
+        "final_labels"
+      ]
+    }
+  ]
+}
