@@ -70,6 +70,7 @@ class LoadReport:
     language_distribution: dict[str, int] = field(default_factory=dict)
     translation_skipped: dict[str, int] = field(default_factory=dict)
     dataset_total: int | None = None  # total source records available (before limit)
+    dataset_kind: str | None = None  # "real" | "mock" | "fixture" (provenance)
     sampling: str = "first"
     seed: int | None = None
     split: str | None = None
@@ -505,6 +506,7 @@ def load_samples_en(
     seed: int | None = None,
     language_filter: str | None = None,
     text_mode: str | None = None,
+    allow_mock: bool | None = None,
     return_report: bool = False,
 ) -> list[Sample] | tuple[list[Sample], LoadReport]:
     """بارگذاری MentalChat16K انگلیسی از Hugging Face."""
@@ -538,6 +540,12 @@ def load_samples_en(
     else:
         n_fetch = len(ds)
     rows = [dict(ds[i]) for i in range(n_fetch)]
+    dataset_kind = dv.detect_dataset_kind(rows)
+    if dataset_kind == "mock" and not (config.ALLOW_MOCK_DATASET if allow_mock is None else allow_mock):
+        raise DataValidationError(
+            "MOCK DATA refused: the loaded dataset contains mock markers. "
+            "It must never be treated as production data."
+        )
 
     samples, report = _build_samples(
         rows,
@@ -551,6 +559,7 @@ def load_samples_en(
         language_filter=language_filter,
     )
     report.dataset_total = len(ds)
+    report.dataset_kind = dataset_kind
     print(
         f"[data_loader] Prepared {len(samples)} English samples "
         f"(duplicates removed: {report.duplicates_removed})."
@@ -567,6 +576,7 @@ def load_samples_fa(
     seed: int | None = None,
     language_filter: str | None = None,
     text_mode: str | None = None,
+    allow_mock: bool | None = None,
     return_report: bool = False,
 ) -> list[Sample] | tuple[list[Sample], LoadReport]:
     """بارگذاری دیتاست فارسی از JSONL/CSV/TSV/JSON با اعتبارسنجی کامل.
@@ -589,6 +599,13 @@ def load_samples_fa(
 
     print(f"[data_loader] Loading Persian dataset from {fa_path} ...")
     rows, load_stats = _load_rows(fa_path)
+    dataset_kind = dv.detect_dataset_kind(rows, path=fa_path)
+    if dataset_kind == "mock" and not (config.ALLOW_MOCK_DATASET if allow_mock is None else allow_mock):
+        raise DataValidationError(
+            f"MOCK DATA refused: {fa_path} is a mock/fixture dataset, not a "
+            "real translated corpus. Pass allow_mock=True (--allow-mock) only "
+            "for pipeline mechanics testing."
+        )
 
     samples, report = _build_samples(
         rows,
@@ -604,6 +621,7 @@ def load_samples_fa(
         language_filter=language_filter,
     )
     report.dataset_total = len(rows)
+    report.dataset_kind = dataset_kind
     print(
         f"[data_loader] Prepared {len(samples)} Persian samples "
         f"(mode={config.LABEL_TEXT_MODE}, encoding={report.encoding}, "
@@ -623,6 +641,7 @@ def load_samples(
     seed: int | None = None,
     language_filter: str | None = None,
     text_mode: str | None = None,
+    allow_mock: bool | None = None,
     return_report: bool = False,
 ) -> list[Sample] | tuple[list[Sample], LoadReport]:
     """بارگذاری نمونه‌ها با پشتیبانی dev/eval split.
@@ -650,6 +669,7 @@ def load_samples(
         "seed": seed,
         "language_filter": language_filter,
         "text_mode": text_mode,
+        "allow_mock": allow_mock,
     }
     if path is not None or maybe_path.suffix.lower() in {
         ".jsonl", ".csv", ".tsv", ".json"

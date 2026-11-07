@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import pytest
 
 from facts import CATEGORY_KEYS
 from gap_analysis import build_report
@@ -92,7 +93,7 @@ def test_gap_report_old_format_has_no_phase3_signals():
     assert report["n_uncertain"] is None
     assert report["uncertain_rate"] is None
     assert report["margin_stats"] is None
-    assert all(report["per_category"][c]["matched_count"] == 0 for c in CATEGORY_KEYS)
+    assert all(report["per_category"][c]["matched_count"] is None for c in CATEGORY_KEYS)
 
 
 def test_gap_report_markdown_renders_uncertainty_section():
@@ -104,3 +105,40 @@ def test_gap_report_markdown_renders_uncertainty_section():
     assert "## Uncertainty & prototype evidence" in md
     assert "Explicit uncertain decisions: **1**" in md
     assert "Matched-prototype evidence per category" in md
+
+
+# --------------------------------------------------------------------------
+# Issue #15 — confidence-percent warning + extended score-scale statistics
+# --------------------------------------------------------------------------
+
+
+def test_gap_report_markdown_carries_confidence_warning():
+    from gap_analysis import (
+        CONFIDENCE_NOT_ACCURACY_EN,
+        CONFIDENCE_NOT_ACCURACY_FA,
+        render_markdown,
+    )
+
+    df, scores = _df_with_phase3_signals()
+    report = build_report(df, scores, threshold=0.35)
+    md = render_markdown(report)
+    assert CONFIDENCE_NOT_ACCURACY_FA in md
+    assert CONFIDENCE_NOT_ACCURACY_EN in md
+    # the warning sits directly after the confident-percentage line
+    assert md.index("نمونه‌های بااعتماد") < md.index(CONFIDENCE_NOT_ACCURACY_FA)
+
+
+def test_gap_report_top_score_stats_include_p05_p95():
+    n_cats = len(CATEGORY_KEYS)
+    scores = np.full((10, n_cats), 0.5, dtype=float)
+    top = np.linspace(0.10, 0.90, 10)
+    df = pd.DataFrame({
+        "top_label": ["F"] * 10,
+        "top_score": top,
+        "labels": ["F"] * 10,
+    })
+    report = build_report(df, scores, threshold=0.35)
+    stats = report["top_score_stats"]
+    assert stats["p05"] == pytest.approx(0.14, abs=0.02)
+    assert stats["p95"] == pytest.approx(0.86, abs=0.02)
+    assert stats["p05"] <= stats["p25"] <= stats["p75"] <= stats["p95"]

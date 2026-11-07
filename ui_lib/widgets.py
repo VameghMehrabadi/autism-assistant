@@ -6,7 +6,35 @@ from pathlib import Path
 import streamlit as st
 
 import config
+from data_validation import detect_dataset_kind_file
 from facts import category_titles_bilingual
+
+# Issue #25: provenance labels so mock/fixture data can never be mistaken
+# for a real translated dataset.
+MOCK_DATA_LABEL = "MOCK DATA — NOT REAL TRANSLATION"
+FIXTURE_DATA_LABEL = "TEST FIXTURE — NOT REAL TRANSLATION"
+NOT_TRANSLATED_FA = "ترجمه‌ی واقعی هنوز اجرا نشده است"
+NOT_TRANSLATED_EN = "No real translation has been executed yet — status: INCOMPLETE."
+
+
+def dataset_provenance(path: str | Path | None) -> tuple[str, str]:
+    """Return ``(kind, user-facing label)`` for a dataset file.
+
+    ``kind`` is one of ``missing | mock | fixture | real``. The label is
+    intended for direct display in the UI so the data source is identifiable
+    without inspecting logs or source code.
+    """
+    if not path:
+        return "missing", NOT_TRANSLATED_FA
+    p = Path(path)
+    if not p.exists():
+        return "missing", NOT_TRANSLATED_FA
+    kind = detect_dataset_kind_file(p)
+    if kind == "mock":
+        return "mock", MOCK_DATA_LABEL
+    if kind == "fixture":
+        return "fixture", FIXTURE_DATA_LABEL
+    return "real", "Real dataset"
 
 
 MODEL_LABELS = {
@@ -53,7 +81,7 @@ def render_dataset_selector(key_prefix: str = "ds") -> tuple[str, str | None]:
         format_func={
             "en": "English MentalChat16K (Hugging Face)",
             "fa": "Persian JSONL (data/mentalchat16k_fa.jsonl)",
-            "sample": "Tiny Persian sample (tests/fixtures)",
+            "sample": "Tiny Persian sample (tests/fixtures) — TEST FIXTURE, 5 records, not real translation output",
             "custom": "Custom file path",
         }.__getitem__,
         key=f"{key_prefix}_source",
@@ -123,3 +151,36 @@ def render_category_legend() -> None:
 def persian_dataset_ready(path: str | Path | None = None) -> bool:
     p = Path(path) if path else config.PERSIAN_DATASET_PATH
     return p.exists()
+
+
+def render_storage_security_banner(compact: bool = False) -> None:
+    """Issue #11 — show the effective storage-security mode in the UI.
+
+    Full banner on the Home page, compact caption on sub-pages. Fails
+    closed: an invalid storage-security configuration shows an error and
+    stops the page instead of rendering content. Never displays secrets
+    (none exist — protection is operator-declared OS-level encryption).
+    """
+    import streamlit as st
+
+    from storage_security import (
+        MODE_PATIENT_DATA,
+        StorageSecurityError,
+        security_summary,
+        validate_storage_security,
+        warning_message,
+    )
+
+    try:
+        security = validate_storage_security()
+    except StorageSecurityError as exc:
+        st.error(f"**Storage security configuration invalid** — {exc}")
+        st.stop()
+        return
+    if compact:
+        st.caption(security_summary(security))
+        return
+    if security.mode == MODE_PATIENT_DATA:
+        st.info(warning_message(security))
+    else:
+        st.warning(warning_message(security))
