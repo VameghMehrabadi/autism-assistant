@@ -81,6 +81,114 @@ def labeled_csv_sha256(path: Path) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+def file_sha256(path: Path) -> str:
+    """Full sha256 of any file (source-artifact fingerprints, Issue #9)."""
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+# --- Issue #9 review fixes: strict per-field contract validation -----------
+# A run is `modern` only when EVERY required execution-time field is present
+# with a schema-valid value. Legitimate schema values are preserved:
+# `text_window: null` (the model's own default) and numeric zero are valid.
+
+
+def _is_hex16(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 16
+        and all(c in "0123456789abcdef" for c in value.lower())
+    )
+
+
+def _is_hex64(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(c in "0123456789abcdef" for c in value.lower())
+    )
+
+
+def _is_nonempty_str(value: object) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _is_number(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _is_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+FIELD_VALIDATORS = {
+    "dataset_fingerprint": _is_hex16,
+    "text_window": lambda v: v is None or (_is_int(v) and v >= 1),
+    "preprocess_version": _is_nonempty_str,
+    "threshold": lambda v: _is_number(v) and v >= 0,
+    "dataset_total": lambda v: _is_int(v) and v >= 0,
+}
+
+
+def _modern_field_issues(meta: dict) -> list[str]:
+    """Missing or schema-invalid execution-time fields (sorted, stable)."""
+    issues: list[str] = []
+    for field in MODERN_REQUIRED_FIELDS:
+        if field not in meta:
+            issues.append(f"missing: {field}")
+        elif not FIELD_VALIDATORS[field](meta[field]):
+            issues.append(f"invalid: {field}")
+    return issues
+
+
+LEGACY_SCHEMA = "legacy-alignment-v1"
+
+# Required evidence fields of a retroactive artifact, with validators.
+LEGACY_EVIDENCE_FIELDS = {
+    "labeled_csv_sha256": _is_hex64,
+    "labeled_text_fingerprint": _is_hex16,
+    "ordered_input_fingerprint_derived": _is_hex16,
+    "record_idx_fingerprint": _is_hex16,
+    "record_count": lambda v: _is_int(v) and v >= 0,
+}
+
+
+def _valid_legacy_artifact(artifact: object) -> bool:
+    """Strict, defensive validation of a retroactive alignment artifact.
+
+    Malformed, incomplete, or unexpected structures are rejected — they must
+    never classify a run as ``legacy-partial`` and never raise.
+    """
+    if not isinstance(artifact, dict):
+        return False
+    if artifact.get("schema") != LEGACY_SCHEMA:
+        return False
+    if artifact.get("provenance") != "retroactive":
+        return False
+    if artifact.get("classification") != CLASSIFICATION_LEGACY_PARTIAL:
+        return False
+    evidence = artifact.get("evidence")
+    if not isinstance(evidence, dict):
+        return False
+    for field, check in LEGACY_EVIDENCE_FIELDS.items():
+        if field not in evidence or not check(evidence[field]):
+            return False
+    missing = artifact.get("missing")
+    if not isinstance(missing, dict):
+        return False
+    if not all(
+        isinstance(key, str) and isinstance(value, str)
+        for key, value in missing.items()
+    ):
+        return False
+    sources = artifact.get("sources", {})
+    if not isinstance(sources, dict) or not all(
+        isinstance(key, str) and isinstance(value, str)
+        for key, value in sources.items()
+    ):
+        return False
+    return True
+
+
 def read_json(path: Path) -> tuple[object | None, str | None]:
     """Tolerant JSON read: (value, None) or (None, error reason)."""
     try:
@@ -94,14 +202,15 @@ def read_json(path: Path) -> tuple[object | None, str | None]:
 def classify_alignment(run_dir: Path, meta: dict | None = None) -> dict:
     """Classify one run's alignment metadata status (never raises).
 
-    Classification:
-    - ``modern``          — execution-time run_meta carries the full Phase-4
-      contract (``dataset_fingerprint`` present).
-    - ``legacy-partial``  — no execution-time contract, but a retroactive
-      ``alignment_legacy.json`` artifact records the reconstructable
-      evidence (created by ``migrate_legacy_alignment``).
-    - ``legacy``          — no execution-time contract and no artifact; the
-      run cannot be treated as verified.
+    Classification (Issue #9 review fix — strict contract validation):
+    - ``modern``          — execution-time run_meta carries EVERY Phase-4
+      contract field with a schema-valid value (``text_window: null`` is the
+      legitimate model-default value; numeric zero is valid where allowed).
+    - ``legacy-partial``  — no valid execution-time contract, but a strictly
+      validated retroactive ``alignment_legacy.json`` artifact records the
+      reconstructable evidence.
+    - ``legacy``          — no execution-time contract and no valid artifact;
+      the run cannot be treated as verified.
     """
     run_dir = Path(run_dir)
     meta_path = run_dir / "run_meta.json"
@@ -111,10 +220,11 @@ def classify_alignment(run_dir: Path, meta: dict | None = None) -> dict:
         if meta is not None and not isinstance(meta, dict):
             meta, meta_error = None, "run_meta.json is not a JSON object"
 
-    has_contract = bool(meta) and isinstance(meta, dict) and bool(
-        meta.get("dataset_fingerprint")
-    )
-    if has_contract:
+    if isinstance(meta, dict):
+        issues = _modern_field_issues(meta)
+    else:
+        issues = list(MODERN_REQUIRED_FIELDS)
+    if isinstance(meta, dict) and not issues:
         return {
             "classification": CLASSIFICATION_MODERN,
             "reason": None,
@@ -124,41 +234,39 @@ def classify_alignment(run_dir: Path, meta: dict | None = None) -> dict:
 
     artifact_path = run_dir / LEGACY_ARTIFACT_NAME
     artifact, artifact_error = read_json(artifact_path)
-    if isinstance(artifact, dict) and artifact.get("provenance") == (
-        "retroactive"
-    ):
+    if _valid_legacy_artifact(artifact):
         return {
             "classification": CLASSIFICATION_LEGACY_PARTIAL,
             "reason": (
-                "execution-time alignment metadata absent; retroactive "
-                f"artifact present ({LEGACY_ARTIFACT_NAME})"
+                "execution-time alignment metadata absent or incomplete "
+                f"({'; '.join(issues)}); retroactive artifact present "
+                f"({LEGACY_ARTIFACT_NAME})"
             ),
             "artifact": LEGACY_ARTIFACT_NAME,
-            "missing_fields": list(artifact.get("missing", {})),
+            "missing_fields": issues,
         }
 
     if meta_error:
         reason = f"run_meta.json malformed ({meta_error})"
-    elif meta is None:
+    elif not isinstance(meta, dict):
         reason = "run_meta.json absent"
     else:
-        missing = [
-            field for field in MODERN_REQUIRED_FIELDS
-            if not meta.get(field)
-        ]
         reason = (
-            "run_meta predates the Phase-4 alignment contract; missing: "
-            + ", ".join(missing)
+            "run_meta predates the Phase-4 alignment contract or has "
+            "invalid values; " + "; ".join(issues)
         )
     if artifact_error:
         reason += f"; {LEGACY_ARTIFACT_NAME} malformed ({artifact_error})"
+    elif artifact is not None:
+        reason += (
+            f"; {LEGACY_ARTIFACT_NAME} present but invalid or incomplete — "
+            "treated as legacy"
+        )
     return {
         "classification": CLASSIFICATION_LEGACY,
         "reason": reason,
         "artifact": None,
-        "missing_fields": [] if meta_error else [
-            field for field in MODERN_REQUIRED_FIELDS if not meta.get(field)
-        ] if isinstance(meta, dict) else list(MODERN_REQUIRED_FIELDS),
+        "missing_fields": issues,
     }
 
 
@@ -216,14 +324,31 @@ def build_legacy_artifact(run_dir: Path) -> dict:
     )
     if gap_error:
         missing["threshold"] = f"gap_analysis.json unreadable ({gap_error})"
+    elif gap_threshold is None:
+        missing["threshold"] = (
+            "gap_analysis.json absent or contains no threshold"
+        )
+
+    # Issue #9 review fix — fingerprints of EVERY source artifact that
+    # influences the reconstruction, so a change to any of them invalidates
+    # the artifact. Missing sources are represented deterministically.
+    sources = {
+        name: (
+            file_sha256(run_dir / name)
+            if (run_dir / name).exists()
+            else "absent"
+        )
+        for name in ("labeled.csv", "run_meta.json", "gap_analysis.json")
+    }
 
     return {
-        "schema": "legacy-alignment-v1",
+        "schema": LEGACY_SCHEMA,
         "provenance": "retroactive",
         "classification": CLASSIFICATION_LEGACY_PARTIAL,
         "generated_utc": datetime.now(timezone.utc).isoformat(
             timespec="seconds"
         ),
+        "sources": sources,
         "evidence": {
             "labeled_csv_sha256": labeled_csv_sha256(labeled_path),
             "labeled_text_fingerprint": labeled_text_fingerprint(df),
@@ -249,10 +374,13 @@ def migrate_legacy_alignment(
 ) -> dict:
     """Write ``alignment_legacy.json`` for eligible historical runs.
 
-    Idempotent: a run whose artifact already matches the current
-    ``labeled.csv`` (same artifact sha256) is left untouched unless
-    ``force`` is set. ``labeled.csv`` bytes are never modified and valid
-    modern metadata is never overwritten. Returns a content-free summary.
+    Idempotent (Issue #9 review fix): a run whose existing artifact is
+    strictly valid AND whose recorded source fingerprints (labeled.csv,
+    run_meta.json, gap_analysis.json) all match the current sources is left
+    untouched unless ``force`` is set — a change to ANY source invalidates
+    and regenerates the artifact. ``labeled.csv`` and ``run_meta.json``
+    bytes are never modified and valid modern metadata is never overwritten.
+    Returns a content-free summary.
     """
     migrated: list[str] = []
     already: list[str] = []
@@ -274,11 +402,10 @@ def migrate_legacy_alignment(
         try:
             existing, _ = read_json(artifact_path)
             artifact = build_legacy_artifact(run_dir)
-            current_sha = artifact["evidence"]["labeled_csv_sha256"]
+            current_sources = artifact.get("sources", {})
             if (
-                isinstance(existing, dict)
-                and existing.get("evidence", {}).get("labeled_csv_sha256")
-                == current_sha
+                _valid_legacy_artifact(existing)
+                and existing.get("sources") == current_sources
                 and not force
             ):
                 already.append(name)

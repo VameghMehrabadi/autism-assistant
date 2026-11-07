@@ -142,10 +142,30 @@ explicit reasons.
 ### Rerun procedure for fully verifiable results
 
 ```bash
-python compare_runs.py --migrate-legacy-alignment   # retroactive artifacts (idempotent)
-python compare_runs.py --verify-alignment           # classification + cross-run checks
-python compare_runs.py --limit 0                    # full re-run with execution-time metadata
+# 1. retroactive artifacts for historical runs (idempotent; sources-fingerprinted)
+python compare_runs.py --migrate-legacy-alignment
+# 2. classification + cross-run record checks
+python compare_runs.py --verify-alignment
+# 3. fully verifiable re-run — into a NEW directory, preserving history:
+python main.py --limit 0 --model minilm --fact-lang fa --dataset en     --out outputs/verified_1_fa_en_minilm
+#    then confirm the metadata contract:
+python -c "from alignment import classify_alignment; print(classify_alignment('outputs/verified_1_fa_en_minilm'))"
 ```
+
+**Warning:** `python compare_runs.py --only <n>` re-executes a run AND
+overwrites `outputs/comparison/<run-id>` — archive the historical
+directory first if it must be kept (`--skip-existing` skips existing runs
+instead of rerunning them).
+
+**`all_records_aligned` semantics:** it means ONLY that the labeled
+record-ID sets match the reference run. It is NOT dataset-level provenance
+and NOT execution-time verification — the per-run classifications and
+`all_runs_modern` carry that distinction (`legacy-partial` and `legacy`
+runs never contribute to a modern-verified claim). Migration invalidation:
+each retroactive artifact records sha256 fingerprints of ALL its sources
+(`labeled.csv`, `run_meta.json`, `gap_analysis.json`; missing = `absent`)
+— a change to any source regenerates the artifact on the next migration;
+the artifact's own timestamp is excluded from the comparison.
 
 Migrated runs remain classified `legacy-partial` forever — they are never
 converted to `verified`. The comparison report

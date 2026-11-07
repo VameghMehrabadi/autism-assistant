@@ -217,12 +217,29 @@ def render_comparison_markdown(summaries: list[dict], table: pd.DataFrame) -> st
             )
         else:
             reason = info.get("reason") or "no alignment metadata available"
+            model = s.get("model_key") or "minilm"
+            fact_lang = s.get("fact_lang") or "fa"
+            dataset = s.get("dataset") or "en"
+            out_dir = f"outputs/verified_{s['id']}"
             lines.append(
                 f"- `{s['id']}`: **{classification}** — {reason}. This run "
-                "is NOT execution-time verified. Rerun for fully "
-                "verifiable results: `python compare_runs.py --only "
-                f"{i} --limit 0`."
+                "is NOT execution-time verified. Rerun with the pipeline "
+                "CLI (preserves history — never overwrites the historical "
+                "directory): `python main.py --limit 0 --model "
+                f"{model} --fact-lang {fact_lang} --dataset {dataset} "
+                f"--out {out_dir}`, then check the metadata: `python -c "
+                f"\"from alignment import classify_alignment; "
+                f"print(classify_alignment('{out_dir}'))\"`."
             )
+    lines += [
+        "",
+        "Note: `python compare_runs.py --only <n>` re-executes a run AND "
+        "overwrites `outputs/comparison/<run-id>` — archive the historical "
+        "directory first if it must be kept (`--skip-existing` skips "
+        "existing runs instead of rerunning them). `all_records_aligned` "
+        "means the labeled record-ID sets match the reference run — it is "
+        "NOT dataset-level provenance and NOT execution-time verification.",
+    ]
 
     lines += [
         "",
@@ -330,7 +347,11 @@ def verify_alignment(run_ids: list[str] | None = None) -> dict:
 
     Returns a content-free verification report. Historical runs predating the
     alignment metadata report ``null`` for the new fields — absence is
-    reported honestly, never backfilled.
+    reported honestly, never backfilled. ``all_records_aligned`` means ONLY
+    that the labeled record-ID sets match the reference run — not
+    dataset-level provenance and not execution-time verification (see
+    ``all_records_aligned_semantics`` and the per-run alignment
+    classifications; ``all_runs_modern`` is the strict modern-verified flag).
     """
     import pandas as pd
 
@@ -399,12 +420,15 @@ def verify_alignment(run_ids: list[str] | None = None) -> dict:
             entry["missing_records_vs_total"] = None
         # Issue #9: surface the retroactive artifact's derived fingerprint
         # under an explicitly derived name — never as execution-time metadata.
+        # Strictly validated only; malformed artifacts contribute nothing.
         artifact = alignment.read_json(
             run_dir / alignment.LEGACY_ARTIFACT_NAME
         )[0]
-        if isinstance(artifact, dict):
-            evidence = artifact.get("evidence", {})
-            entry["dataset_fingerprint_derived"] = evidence.get(
+        if (
+            isinstance(artifact, dict)
+            and isinstance(artifact.get("evidence"), dict)
+        ):
+            entry["dataset_fingerprint_derived"] = artifact["evidence"].get(
                 "ordered_input_fingerprint_derived"
             )
         if ref_idx is None:
@@ -425,6 +449,22 @@ def verify_alignment(run_ids: list[str] | None = None) -> dict:
         r.get("records_match_reference") for r in report["runs"] if r.get("status") == "ok"
     ]
     report["all_records_aligned"] = all(record_checks) if record_checks else None
+    # Issue #9 review fix — make the semantics unambiguous: this flag says
+    # ONLY that the labeled record-ID sets correspond. It is NOT proof of
+    # dataset-level provenance and NOT execution-time verification; legacy
+    # and legacy-partial runs never contribute to a modern-verified claim.
+    report["all_records_aligned_semantics"] = (
+        "labeled record-ID sets match the reference run — NOT dataset-level "
+        "provenance and NOT execution-time verification; see per-run "
+        "alignment classifications"
+    )
+    ok_entries = [
+        r for r in report["runs"] if r.get("status") == "ok"
+    ]
+    report["all_runs_modern"] = bool(ok_entries) and all(
+        (r.get("alignment") or {}).get("classification") == "modern"
+        for r in ok_entries
+    )
     report["n_runs_missing_artifacts"] = sum(
         1 for r in report["runs"] if r.get("status") == "MISSING_ARTIFACTS"
     )

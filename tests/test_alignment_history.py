@@ -178,6 +178,10 @@ def test_verify_alignment_succeeds_on_modern_runs(tmp_path, monkeypatch):
         "modern": 2,
         "MISSING_ARTIFACTS": 3,  # runs 3-5 not present in the tmp fixture
     }
+    assert report["all_runs_modern"] is True
+    assert "NOT dataset-level provenance" in (
+        report["all_records_aligned_semantics"]
+    )
 
 
 def test_mixed_modern_and_legacy_verification(tmp_path, monkeypatch):
@@ -203,6 +207,12 @@ def test_mixed_modern_and_legacy_verification(tmp_path, monkeypatch):
         "legacy": 1,
         "MISSING_ARTIFACTS": 3,
     }
+    # Issue #9 review fix: unambiguous semantics — record-set correspondence
+    # is NOT modern verification, and the legacy run never contributes to it
+    assert "NOT dataset-level provenance" in (
+        report["all_records_aligned_semantics"]
+    )
+    assert report["all_runs_modern"] is False
 
 
 # --------------------------------------------------------------------------
@@ -370,7 +380,16 @@ def test_comparison_report_distinguishes_modern_and_legacy(tmp_path):
     assert "**legacy**" in md
     assert "predates the Phase-4 alignment contract" in md
     assert "NOT execution-time verified" in md
-    assert "python compare_runs.py --only 2 --limit 0" in md  # actionable rerun
+    # Issue #9 review fix: the verified rerun uses the pipeline CLI into a
+    # NEW directory (history preserved), not compare_runs --only (which
+    # overwrites the historical run directory)
+    assert (
+        "python main.py --limit 0 --model minilm --fact-lang fa "
+        "--dataset en --out outputs/verified_2_fa_en_bge-m3" in md
+    )
+    assert "classify_alignment('outputs/verified_2_fa_en_bge-m3')" in md
+    assert "overwrites `outputs/comparison/<run-id>`" in md
+    assert "NOT dataset-level provenance" in md
     # deterministic output
     assert md == render_comparison_markdown(summaries, table)
 
@@ -404,3 +423,221 @@ def test_real_historical_runs_are_legacy_partial():
         alignment.CLASSIFICATION_LEGACY_PARTIAL
     }
     assert report["all_records_aligned"] is True
+
+
+# --------------------------------------------------------------------------
+
+
+# --------------------------------------------------------------------------
+# PR #39 review fixes — strict modern contract, source-fingerprint
+# invalidation, strict legacy-artifact validation
+# --------------------------------------------------------------------------
+
+
+def _meta_variant(**overrides: object) -> dict:
+    """A modern metadata object with fields popped/replaced (_POP removes)."""
+    meta = _modern_meta(SENTINEL_TEXTS)
+    for key, value in overrides.items():
+        if value is _POP:
+            meta.pop(key, None)
+        else:
+            meta[key] = value
+    return meta
+
+
+_POP = object()
+
+
+@pytest.mark.parametrize(
+    "overrides, expected_issue",
+    [
+        ({"dataset_fingerprint": _POP}, "missing: dataset_fingerprint"),
+        ({"text_window": _POP}, "missing: text_window"),
+        ({"preprocess_version": _POP}, "missing: preprocess_version"),
+        ({"threshold": _POP}, "missing: threshold"),
+        ({"dataset_total": _POP}, "missing: dataset_total"),
+        ({"dataset_fingerprint": "xyz"}, "invalid: dataset_fingerprint"),
+        ({"text_window": "abc"}, "invalid: text_window"),
+        ({"preprocess_version": ""}, "invalid: preprocess_version"),
+        ({"threshold": "high"}, "invalid: threshold"),
+        ({"dataset_total": -1}, "invalid: dataset_total"),
+        ({"dataset_total": 1.5}, "invalid: dataset_total"),
+    ],
+)
+def test_incomplete_or_invalid_metadata_is_never_modern(
+    tmp_path, overrides, expected_issue
+):
+    run_dir = _make_run_dir(
+        tmp_path, "1_fa_en_minilm", meta=_meta_variant(**overrides)
+    )
+    status = alignment.classify_alignment(run_dir)
+    assert status["classification"] != alignment.CLASSIFICATION_MODERN
+    assert expected_issue in status["missing_fields"]
+
+
+def test_only_dataset_fingerprint_present_is_not_modern(tmp_path):
+    meta = {
+        "dataset_fingerprint": alignment.ordered_input_fingerprint(
+            SENTINEL_TEXTS
+        )
+    }
+    run_dir = _make_run_dir(tmp_path, "1_fa_en_minilm", meta=meta)
+    status = alignment.classify_alignment(run_dir)
+    assert status["classification"] == alignment.CLASSIFICATION_LEGACY
+    assert len(status["missing_fields"]) == 4
+
+
+def test_complete_valid_metadata_is_modern(tmp_path):
+    run_dir = _make_run_dir(
+        tmp_path, "1_fa_en_minilm", meta=_modern_meta(SENTINEL_TEXTS)
+    )
+    status = alignment.classify_alignment(run_dir)
+    assert status["classification"] == alignment.CLASSIFICATION_MODERN
+    assert status["missing_fields"] == []
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"text_window": None},      # legitimate: model's own default
+        {"threshold": 0.0},         # legitimate numeric zero
+        {"dataset_total": 0},       # legitimate numeric zero
+        {"text_window": 1},         # legitimate minimum window
+    ],
+)
+def test_legitimate_values_stay_modern(tmp_path, overrides):
+    meta = _meta_variant(**overrides)
+    run_dir = _make_run_dir(tmp_path, "1_fa_en_minilm", meta=meta)
+    status = alignment.classify_alignment(run_dir)
+    assert status["classification"] == alignment.CLASSIFICATION_MODERN
+
+
+def test_migration_regenerates_when_run_meta_changes(tmp_path):
+    run_dir = _make_run_dir(tmp_path, "1_fa_en_minilm", meta=_legacy_meta())
+    meta_file = run_dir / "run_meta.json"
+    alignment.migrate_legacy_alignment([run_dir])
+    first_sources = json.loads(
+        (run_dir / "alignment_legacy.json").read_text(encoding="utf-8")
+    )["sources"]
+
+    meta_file.write_text(
+        json.dumps(dict(_legacy_meta(), sampling="random")),
+        encoding="utf-8",
+    )
+    second = alignment.migrate_legacy_alignment([run_dir])
+    assert second["migrated"] == ["1_fa_en_minilm"]
+    artifact = json.loads(
+        (run_dir / "alignment_legacy.json").read_text(encoding="utf-8")
+    )
+    assert (
+        artifact["sources"]["run_meta.json"]
+        != first_sources["run_meta.json"]
+    )
+    assert artifact["reconstructed"]["sampling"] == "random"
+
+
+def test_migration_regenerates_when_gap_changes(tmp_path):
+    run_dir = _make_run_dir(tmp_path, "1_fa_en_minilm", meta=_legacy_meta())
+    gap_file = run_dir / "gap_analysis.json"
+    alignment.migrate_legacy_alignment([run_dir])
+
+    gap = json.loads(gap_file.read_text(encoding="utf-8"))
+    gap["threshold"] = 0.4
+    gap_file.write_text(json.dumps(gap), encoding="utf-8")
+    second = alignment.migrate_legacy_alignment([run_dir])
+    assert second["migrated"] == ["1_fa_en_minilm"]
+    artifact = json.loads(
+        (run_dir / "alignment_legacy.json").read_text(encoding="utf-8")
+    )
+    assert artifact["reconstructed"]["threshold"] == 0.4
+
+
+def test_migration_missing_sources_deterministic(tmp_path):
+    run_dir = _make_run_dir(tmp_path, "1_fa_en_minilm", meta=_legacy_meta())
+    (run_dir / "run_meta.json").unlink()
+    (run_dir / "gap_analysis.json").unlink()
+
+    alignment.migrate_legacy_alignment([run_dir])
+    artifact = json.loads(
+        (run_dir / "alignment_legacy.json").read_text(encoding="utf-8")
+    )
+    assert artifact["sources"]["run_meta.json"] == "absent"
+    assert artifact["sources"]["gap_analysis.json"] == "absent"
+    assert artifact["sources"]["labeled.csv"] != "absent"
+    assert "threshold" in artifact["missing"]
+    repeat = alignment.migrate_legacy_alignment([run_dir])
+    assert repeat["already_migrated"] == ["1_fa_en_minilm"]
+
+
+def _write_artifact(run_dir: Path, artifact: object) -> None:
+    if isinstance(artifact, str):
+        (run_dir / "alignment_legacy.json").write_text(
+            artifact, encoding="utf-8"
+        )
+    else:
+        (run_dir / "alignment_legacy.json").write_text(
+            json.dumps(artifact, ensure_ascii=False), encoding="utf-8"
+        )
+
+
+def _valid_artifact_for(run_dir: Path) -> dict:
+    alignment.migrate_legacy_alignment([run_dir])
+    return json.loads(
+        (run_dir / "alignment_legacy.json").read_text(encoding="utf-8")
+    )
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda a: {"missing": None},
+        lambda a: {"evidence": None},
+        lambda a: {"schema": "legacy-alignment-v0"},
+        lambda a: {"provenance": "executed"},
+        lambda a: {"classification": "modern"},
+        lambda a: {"evidence": {"record_count": "3"}},
+        lambda a: {"sources": 42},
+        lambda a: "[]",
+        lambda a: "{ broken json",
+    ],
+)
+def test_invalid_legacy_artifacts_are_treated_as_legacy(tmp_path, mutate):
+    run_dir = _make_run_dir(tmp_path, "1_fa_en_minilm", meta=_legacy_meta())
+    artifact = _valid_artifact_for(run_dir)
+    if isinstance(mutate(artifact), str):
+        mutated = mutate(artifact)          # raw malformed/non-object JSON
+    else:
+        mutated = dict(artifact)
+        mutated.update(mutate(artifact))
+    _write_artifact(run_dir, mutated)
+
+    status = alignment.classify_alignment(run_dir)  # must not raise
+    assert status["classification"] == alignment.CLASSIFICATION_LEGACY
+    assert status["artifact"] is None
+
+
+def test_valid_legacy_artifact_is_legacy_partial(tmp_path):
+    run_dir = _make_run_dir(tmp_path, "1_fa_en_minilm", meta=_legacy_meta())
+    _valid_artifact_for(run_dir)
+    status = alignment.classify_alignment(run_dir)
+    assert status["classification"] == alignment.CLASSIFICATION_LEGACY_PARTIAL
+    assert status["artifact"] == "alignment_legacy.json"
+
+
+def test_verify_alignment_stable_with_invalid_artifact(tmp_path, monkeypatch):
+    base = tmp_path / "comparison"
+    base.mkdir()
+    monkeypatch.setattr(config, "COMPARISON_DIR", base)
+    run_dir = _make_run_dir(base, "1_fa_en_minilm", meta=_legacy_meta())
+    artifact = _valid_artifact_for(run_dir)
+    broken = dict(artifact)
+    broken["evidence"] = None
+    _write_artifact(run_dir, broken)
+
+    report = verify_alignment()  # must not raise, must not count as verified
+    entry = report["runs"][0]
+    assert entry["alignment"]["classification"] == (
+        alignment.CLASSIFICATION_LEGACY
+    )
+    assert "invalid or incomplete" in entry["alignment"]["reason"]
+    assert report["all_runs_modern"] is False
