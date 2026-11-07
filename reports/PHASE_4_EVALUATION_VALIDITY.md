@@ -78,8 +78,80 @@ Created under `data/gold/` (kept **separate** from development data and model ou
 
 ## 8. Remaining Scientific Limitations
 1. **No human-labeled calibration data exists** — all thresholds remain uncalibrated geometric heuristics; the gold set must be labeled (2 rounds + adjudication) before any operating point is meaningful.
-2. **Historical runs lack alignment metadata** — equivalence was verified empirically via content fingerprints, but `text_window`/`dataset_fingerprint` are recorded only for future runs (absence reported honestly, never backfilled).
+2. **Historical runs lack execution-time alignment metadata** — addressed by Issue #9: retroactive, artifact-derived evidence is recorded in a separate `alignment_legacy.json` per run (provenance `retroactive`, classification `legacy-partial`); it is explicitly NOT execution-time metadata and never backfilled into `run_meta.json`. See section 9.
 3. **Different text windows across models** (128 vs 512) are part of each model's configuration; a strict "identical truncation" study would require re-running all models at one window.
 4. **Exact-match input grouping only** for leakage prevention (Phase-2 limitation, unchanged).
 5. MentalChat16K contains almost no autism-specific terminology (Phase-1 finding) — comparison results measure category overlap with a general counseling corpus, not autism-specific performance.
 6. "GPT-3.5 synthetic" provenance remains unverified locally (no network).
+
+## 9. Historical Run Alignment Metadata (Issue #9)
+
+### The alignment metadata contract for new runs
+
+Every run created by `main.run_pipeline` records, at execution time, in
+`run_meta.json`: `threshold`, `preprocess_version`, `text_window`
+(effective per-model window), `dataset_fingerprint` (sha256 of the labeled
+input texts **in row order**, first 16 hex chars — `main.py`), and
+`dataset_total` (pre-validation total), alongside the model/prefix/
+fact-lang/labeler-version fields historical runs already carried. The
+canonical algorithms live in **one place** (`alignment.py`):
+`ordered_input_fingerprint` (the `dataset_fingerprint` algorithm) and
+`labeled_text_fingerprint` (the sorted-text algorithm
+`--verify-alignment` has always used). There is no second implementation.
+
+### Execution-time vs retroactive metadata
+
+| Kind | Where | Classification |
+|---|---|---|
+| Recorded at execution time | `run_meta.json` (written by `run_pipeline`) | `modern` — verifiable |
+| Reconstructed from persisted artifacts (Issue #9) | `alignment_legacy.json` (separate file, `provenance: "retroactive"`) | `legacy-partial` — **never** reported as execution-time verified |
+| Nothing available | — | `legacy` |
+
+The retroactive artifact contains: `labeled_csv_sha256` (artifact
+identity), `labeled_text_fingerprint` (sorted-text canonical hash),
+`ordered_input_fingerprint_derived` (row-order hash **derived from
+labeled.csv** — clearly named as derived, because a hash of the labeled
+artifact cannot by itself prove dataset-level provenance such as
+pre-filtering records or `dataset_total`), `record_idx_fingerprint`,
+`record_count`, and the execution-time fields the historical run did record
+(`threshold` from its gap report; model/prefix/fact-lang/labeler-version
+from its `run_meta.json` — with their source noted). Fields that cannot be
+proven are listed under `missing` with reasons: `dataset_fingerprint_
+execution_time`, `text_window`, `preprocess_version`, `dataset_total`.
+
+### How historical (legacy) runs are identified
+
+`python compare_runs.py --verify-alignment` classifies every run:
+`modern` / `legacy-partial` / `legacy` / `MISSING_ARTIFACTS`, with
+`alignment_summary` counts. Classification never raises on malformed or
+non-object `run_meta.json` / `gap_analysis.json` (the error is reported in
+the entry as `run_meta_error` / `gap_report_error`, type name only — no
+absolute paths). `all_records_aligned` continues to be computed from the
+labeled record-ID sets, so cross-run input equivalence remains auditable
+for legacy runs; a missing threshold is reported as `null` with
+`threshold_match` unset — never silently treated as matching.
+
+### What the evidence cannot establish
+
+A labeled.csv hash proves the identity of that artifact. It does not prove
+the original dataset-level provenance of a historical run (pre-validation
+records, ordering at load time, preprocessing version, effective text
+window). Those fields remain `missing` in the retroactive artifact with
+explicit reasons.
+
+### Rerun procedure for fully verifiable results
+
+```bash
+python compare_runs.py --migrate-legacy-alignment   # retroactive artifacts (idempotent)
+python compare_runs.py --verify-alignment           # classification + cross-run checks
+python compare_runs.py --limit 0                    # full re-run with execution-time metadata
+```
+
+Migrated runs remain classified `legacy-partial` forever — they are never
+converted to `verified`. The comparison report
+(`comparison_report.md`, section "Run alignment") marks every non-modern
+run with its reason and the exact rerun command
+(`python compare_runs.py --only <n> --limit 0`). Runs 1–3 have been
+migrated (retroactive artifacts written; `labeled.csv` and `run_meta.json`
+bytes untouched — sha256-verified) and verify as `legacy-partial` with
+`all_records_aligned: true`.
