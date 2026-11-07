@@ -45,5 +45,32 @@ services:
     entrypoint: ["python"]
     command: ["main.py", "--help"]
 
+  # One-off model-weight prefetch into the persistent model_cache volume:
+  #   docker compose run --rm prefetch            (all registered models)
+  #   docker compose run --rm prefetch --model minilm
+  # Weights land in SENTENCE_TRANSFORMERS_HOME=/cache/hf/sentence-transformers
+  # on the model_cache volume and survive container recreation.
+  prefetch:
+    image: autism-assistant:latest
+    build: .
+    profiles: ["prefetch"]
+    environment:
+      AUTISM_CACHE_DIR: /cache
+      HF_HOME: /cache/hf
+      HF_HUB_CACHE: /cache/hf/hub
+      TRANSFORMERS_CACHE: /cache/hf/transformers
+      SENTENCE_TRANSFORMERS_HOME: /cache/hf/sentence-transformers
+      HF_TOKEN: ${HF_TOKEN:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ZAI_API_KEY: ${ZAI_API_KEY:-}
+      ZHIPU_API_KEY: ${ZHIPU_API_KEY:-}
+      ZAI_BASE_URL: ${ZAI_BASE_URL:-}
+    volumes:
+      - ./data:/app/data
+      - ./outputs:/app/outputs
+      - model_cache:/cache
+    entrypoint: ["python"]
+    command: ["prefetch_models.py", "--model", "all"]
+
 volumes:
   model_cache:

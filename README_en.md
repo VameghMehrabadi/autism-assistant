@@ -36,11 +36,61 @@ Details: `reports/` (phase reports, final report, cost analysis), `DEVELOPMENT_L
 
 ## Supported embedding models
 
-| Key | Hugging Face ID | Notes |
-|-----|-----------------|-------|
-| `minilm` | `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` | Original task-1 model |
-| `bge-m3` | `BAAI/bge-m3` | Stronger multilingual dense model |
-| `e5-large` | `intfloat/multilingual-e5-large` | Uses `query:` / `passage:` prefixes |
+| Key | Hugging Face ID | Notes | Approx. download* |
+|-----|-----------------|-------|-------------------|
+| `minilm` | `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` | Original task-1 model | ~0.5 GB |
+| `bge-m3` | `BAAI/bge-m3` | Stronger multilingual dense model | ~2.3 GB |
+| `e5-large` | `intfloat/multilingual-e5-large` | Uses `query:` / `passage:` prefixes | ~2.3 GB |
+
+\* Approximate fp32 weight sizes from the Hugging Face model cards of the
+pinned models — treat them as estimates, not exact numbers.
+
+## Model cache, prefetch & offline runs (Issue #14)
+
+Three distinct on-disk artifacts — do not confuse them:
+
+| Artifact | Location | Purpose |
+|----------|----------|---------|
+| **Model weights** (`models--*`) | `config.MODEL_CACHE_DIR` | Downloaded encoder weights used by inference |
+| **Embedding cache** | `config.EMBED_CACHE_DIR` (`CACHE_DIR/embed_cache`) | Computed sentence vectors (speeds up re-runs; safe to delete) |
+| **Pipeline outputs** | `outputs/` | `labeled.csv`, reports, charts per run |
+
+The weights cache resolves in this order: `AUTISM_MODEL_CACHE_DIR` (override)
+> `SENTENCE_TRANSFORMERS_HOME` (standard variable) > `config.CACHE_DIR`
+(`AUTISM_CACHE_DIR` → `D:\autism_assistant_cache` if a `D:` drive exists,
+otherwise `<project>/.cache`). Set any of these **before** launching Python —
+huggingface_hub reads its configuration at import time.
+
+```bash
+# Inspect the registry, cache locations and approximate sizes
+python prefetch_models.py --list
+
+# Prefetch one model (no dataset, no API key, no labeling)
+python prefetch_models.py --model minilm
+
+# Prefetch every registered model
+python prefetch_models.py --model all
+```
+
+**Offline runs.** After a successful prefetch, set the offline switches and
+run the pipeline normally — weights load from the local cache and no network
+request is attempted (any hub request would fail loudly under
+`HF_HUB_OFFLINE=1`):
+
+```bash
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 python main.py --limit 5 --model minilm
+```
+
+**Missing-model errors.** If weights are absent (or offline without cache),
+loading fails with an actionable message naming the model key, the Hugging
+Face ID, the expected cache location, whether offline mode is enabled, and the
+exact prefetch command — instead of a bare network stack trace. Diagnosis:
+1. Run `python prefetch_models.py --list` and check the cache location line.
+2. Verify that folder contains `models--<org>--<name>` for your model.
+3. Run the printed `python prefetch_models.py --model <key>` command while
+   online, then retry offline.
+The loader never falls back to a different encoder and never retries online
+in offline mode.
 
 ## Five-way comparison matrix — all runs use Persian facts
 
@@ -89,7 +139,25 @@ UI: [http://localhost:8501](http://localhost:8501). Models download on first use
 ```bash
 # one-off CLI in the same image
 docker compose run --rm pipeline main.py --limit 50 --model minilm --fact-lang fa --dataset en
+
+# one-off weight prefetch into the persistent model_cache volume (no dataset needed)
+docker compose run --rm prefetch                 # all registered models
+docker compose run --rm prefetch --model minilm  # one model
 ```
+
+**Cache persistence.** All services set `AUTISM_CACHE_DIR=/cache` and mount
+the named volume `model_cache` at `/cache`; inside the container the weights
+cache resolves to `SENTENCE_TRANSFORMERS_HOME=/cache/hf/sentence-transformers`
+on that volume, so downloaded weights survive container recreation. Host-side
+prefetch (no env vars) puts weights in the host's `config.MODEL_CACHE_DIR`
+instead — to reuse host-prefetched weights in the container, mount that host
+folder at `/cache/hf/sentence-transformers`. Model weights (`models--*`),
+the embedding cache (`/cache/embed_cache`) and pipeline outputs
+(`./outputs`) are separate artifacts.
+
+> Volume persistence is documented from the compose configuration; an actual
+> build/recreate verification is pending Docker daemon availability
+> (Issue #14 acceptance evidence tracked in the PR).
 
 ## Translate dataset to Persian
 

@@ -17,7 +17,7 @@
 | خط لوله‌ی ترجمه‌ی فارسی | ✅ پیاده‌سازی + تست (اجرای موک)؛ **اجرای واقعی منتظر `ZAI_API_KEY`** |
 | یکپارچه‌سازی Z.ai (GLM) | ✅ پیاده‌سازی + تأیید؛ منتظر کلید |
 | رابط کاربری Streamlit | ✅ پیاده‌سازی + تأیید در مرورگر واقعی |
-| تست‌ها | ✅ ۱۷۴ تست سبز (`pytest`)؛ CI برقرار |
+| تست‌ها | ✅ ۲۷۴ تست سبز (`pytest`)؛ CI برقرار |
 | ایمیج Docker | ⚠️ فایل‌ها آماده و پین‌شده؛ build در این محیط اجرا نشد (دیمون Docker در دسترس نبود) |
 
 جزئیات: `reports/` (گزارش فازها، گزارش نهایی، تحلیل هزینه) و `DEVELOPMENT_LOG.md`.
@@ -36,11 +36,60 @@
 
 ## مدل‌های امبدینگ
 
-| کلید | مدل | توضیح |
-|------|------|--------|
-| `minilm` | `paraphrase-multilingual-MiniLM-L12-v2` | مدل task اول |
-| `bge-m3` | `BAAI/bge-m3` | مدل قوی‌تر چندزبانه |
-| `e5-large` | `intfloat/multilingual-e5-large` | با prefixهای `query:` / `passage:` |
+| کلید | مدل | توضیح | حجم تقریبی دانلود* |
+|------|------|--------|---------------------|
+| `minilm` | `paraphrase-multilingual-MiniLM-L12-v2` | مدل task اول | ~۰٫۵ GB |
+| `bge-m3` | `BAAI/bge-m3` | مدل قوی‌تر چندزبانه | ~۲٫۳ GB |
+| `e5-large` | `intfloat/multilingual-e5-large` | با prefixهای `query:` / `passage:` | ~۲٫۳ GB |
+
+\* حجم تقریبی وزن‌های fp32 بر اساس کارت مدل‌های Hugging Face — عدد تقریبی است، نه دقیق.
+
+## کش مدل‌ها، Prefetch و اجرای آفلاین (Issue #14)
+
+سه مسیر دیسکی متمایز — این‌ها را با هم اشتباه نگیرید:
+
+| مسیر | مکان | محتوا |
+|------|------|-------|
+| **وزن مدل** (`models--*`) | `config.MODEL_CACHE_DIR` | وزن‌های دانلودشده‌ی encoder برای استنتاج |
+| **کش امبدینگ** | `config.EMBED_CACHE_DIR` (`CACHE_DIR/embed_cache`) | بردارهای محاسبه‌شده (سرعت‌بخش به اجرای مجدد؛ حذفش بی‌خطر است) |
+| **خروجی‌های pipeline** | `outputs/` | `labeled.csv`، گزارش‌ها و نمودار هر اجرا |
+
+ترتیب تعیین مسیر کش وزن‌ها: `AUTISM_MODEL_CACHE_DIR` (override اختصاصی) >
+`SENTENCE_TRANSFORMERS_HOME` (متغیر استاندارد) > `config.CACHE_DIR`
+(`AUTISM_CACHE_DIR` → در صورت وجود درایو `D:` مسیر `D:\autism_assistant_cache`،
+وگرنه `<project>/.cache`). این متغیرها را **قبل از اجرای Python** تنظیم کنید —
+huggingface_hub پیکربندی خود را هنگام import می‌خواند.
+
+```bash
+# دیدن رجیستری مدل‌ها، مسیر کش و حجم تقریبی
+python prefetch_models.py --list
+
+# دانلود یک مدل (بدون دیتاست، بدون کلید API، بدون لیبل‌گذاری)
+python prefetch_models.py --model minilm
+
+# دانلود همه‌ی مدل‌های رجیستری
+python prefetch_models.py --model all
+```
+
+**اجرای آفلاین.** پس از یک prefetch موفق، کلیدهای آفلاین را تنظیم کنید و
+pipeline را معمول اجرا کنید — وزن‌ها از کش محلی می‌آیند و هیچ درخواست شبکه‌ای
+زده نمی‌شود (در حالت `HF_HUB_OFFLINE=1` هر درخواست hub با خطا قطع می‌شود، پس
+اجرای موفق یعنی واقعاً آفلاین):
+
+```bash
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 python main.py --limit 5 --model minilm
+```
+
+**خطای مدل غایب.** اگر وزن در کش نباشد (یا آفلاین باشید و کش خالی باشد)،
+بارگیری با پیامی قابل‌فهم شکست می‌خورد که کلید مدل، شناسه‌ی Hugging Face، مسیر
+انتظار کش، وضعیت آفلاین و دقیقاً دستور prefetch لازم را می‌گوید — نه فقط یک
+stacktrace شبکه. تشخیص:
+1. `python prefetch_models.py --list` را اجرا کنید و خط مسیر کش را ببینید.
+2. بررسی کنید همان پوشه `models--<org>--<name>` مدل شما را دارد.
+3. همان دستور `python prefetch_models.py --model <key>` چاپ‌شده را آنلاین
+   اجرا کنید و سپس آفلاین تلاش کنید.
+بارگیر هرگز به encoder دیگری fallback نمی‌کند و در حالت آفلاین تلاش آنلاین
+مخفی انجام نمی‌دهد.
 
 ## ماتریس مقایسه (۵ اجرا) — همه با فکت فارسی
 
@@ -87,7 +136,24 @@ UI روی [http://localhost:8501](http://localhost:8501) باز می‌شود. �
 ```bash
 # یک اجرای CLI داخل همان ایمیج
 docker compose run --rm pipeline main.py --limit 50 --model minilm --fact-lang fa --dataset en
+
+# prefetch یک‌باره‌ی وزن مدل‌ها در volume ماندگار model_cache (بدون دیتاست)
+docker compose run --rm prefetch                 # همه‌ی مدل‌ها
+docker compose run --rm prefetch --model minilm  # یک مدل
 ```
+
+**ماندگاری کش.** همه‌ی سرویس‌ها `AUTISM_CACHE_DIR=/cache` دارند و volume نام‌دار
+`model_cache` روی `/cache` سوار است؛ داخل کانتینر مسیر کش وزن‌ها از طریق
+`SENTENCE_TRANSFORMERS_HOME=/cache/hf/sentence-transformers` روی همان volume
+حل می‌شود، پس وزن‌های دانلودشده پس از حذف/ساخت مجدد کانتینر می‌مانند. prefetch
+سمت هاست (بدون env) وزن‌ها را در `config.MODEL_CACHE_DIR` هاست می‌گذارد —
+برای استفاده از همان وزن‌ها در کانتینر، پوشه‌ی هاست را روی
+`/cache/hf/sentence-transformers` سوار کنید. وزن مدل‌ها (`models--*`)، کش
+امبدینگ (`/cache/embed_cache`) و خروجی‌ها (`./outputs`) مسیرهای جدایی هستند.
+
+> ماندگاری volume بر اساس پیکربندی compose مستند شده است؛ تأیید build واقعی و
+> ساخت مجدد کانتینر به در دسترس بودن Docker daemon وابسته است (در PR شماره
+> Issue #14 به‌صورت BLOCKED گزارش شده).
 
 ## ترجمه‌ی دیتاست به فارسی
 
