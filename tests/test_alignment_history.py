@@ -641,3 +641,64 @@ def test_verify_alignment_stable_with_invalid_artifact(tmp_path, monkeypatch):
     )
     assert "invalid or incomplete" in entry["alignment"]["reason"]
     assert report["all_runs_modern"] is False
+
+
+def test_sources_map_validation_matrix(tmp_path):
+    """Review fix: `sources` is mandatory and must contain exactly the
+    expected source keys with 64-hex sha256 values or exactly "absent"."""
+    run_dir = _make_run_dir(tmp_path, "1_fa_en_minilm", meta=_legacy_meta())
+    valid = _valid_artifact_for(run_dir)
+    real_sources = valid["sources"]
+    assert set(real_sources) == {
+        "labeled.csv", "run_meta.json", "gap_analysis.json"
+    }
+
+    def classify_with(sources):
+        artifact = dict(valid)
+        if sources is _POP:
+            artifact.pop("sources", None)
+        else:
+            artifact["sources"] = sources
+        _write_artifact(run_dir, artifact)
+        status = alignment.classify_alignment(run_dir)  # must not raise
+        assert status["classification"] != (
+            alignment.CLASSIFICATION_MODERN
+        )
+        return status
+
+    # missing `sources` key entirely
+    status = classify_with(_POP)
+    assert status["classification"] == alignment.CLASSIFICATION_LEGACY
+    assert "invalid or incomplete" in status["reason"]
+    # empty sources map
+    assert classify_with({})["classification"] == (
+        alignment.CLASSIFICATION_LEGACY
+    )
+    # one expected source missing
+    partial = dict(real_sources)
+    partial.pop("run_meta.json")
+    assert classify_with(partial)["classification"] == (
+        alignment.CLASSIFICATION_LEGACY
+    )
+    # unexpected extra source
+    extra = dict(real_sources)
+    extra["extra.bin"] = "absent"
+    assert classify_with(extra)["classification"] == (
+        alignment.CLASSIFICATION_LEGACY
+    )
+    # malformed sha256 values (wrong length, non-hex, wrong type)
+    for bad in ("ba990e4b9cea", "z" * 64, 42, None):
+        bad_map = dict(real_sources)
+        bad_map["labeled.csv"] = bad
+        assert classify_with(bad_map)["classification"] == (
+            alignment.CLASSIFICATION_LEGACY
+        )
+    # valid "absent" values (source absent at migration time)
+    absent_map = {key: "absent" for key in real_sources}
+    assert classify_with(absent_map)["classification"] == (
+        alignment.CLASSIFICATION_LEGACY_PARTIAL
+    )
+    # fully valid map
+    assert classify_with(real_sources)["classification"] == (
+        alignment.CLASSIFICATION_LEGACY_PARTIAL
+    )

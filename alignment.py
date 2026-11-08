@@ -142,6 +142,13 @@ def _modern_field_issues(meta: dict) -> list[str]:
 
 LEGACY_SCHEMA = "legacy-alignment-v1"
 
+# The exact source set a retroactive artifact must fingerprint (Issue #9
+# review fix): missing, extra, malformed, or wrongly typed entries
+# invalidate the artifact.
+LEGACY_SOURCE_NAMES = frozenset(
+    {"labeled.csv", "run_meta.json", "gap_analysis.json"}
+)
+
 # Required evidence fields of a retroactive artifact, with validators.
 LEGACY_EVIDENCE_FIELDS = {
     "labeled_csv_sha256": _is_hex64,
@@ -180,12 +187,16 @@ def _valid_legacy_artifact(artifact: object) -> bool:
         for key, value in missing.items()
     ):
         return False
-    sources = artifact.get("sources", {})
-    if not isinstance(sources, dict) or not all(
-        isinstance(key, str) and isinstance(value, str)
-        for key, value in sources.items()
-    ):
+    sources = artifact.get("sources")
+    if not isinstance(sources, dict):
         return False
+    if set(sources) != LEGACY_SOURCE_NAMES:
+        return False
+    for value in sources.values():
+        # each entry is a 64-hex sha256 of the source file, or exactly
+        # "absent" when the source did not exist at migration time
+        if value != "absent" and not _is_hex64(value):
+            return False
     return True
 
 
