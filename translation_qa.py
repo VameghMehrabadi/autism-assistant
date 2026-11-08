@@ -88,6 +88,16 @@ def validate_record(record: Any, position: int) -> tuple[list[QAIssue], int | st
             QAIssue(idx, "BAD_STATUS", "-", f"unknown status {status!r}", SEVERITY_WARNING)
         )
 
+    # Issue #6: mock provenance is a hard failure — records produced by the
+    # mock provider (e.g. model "mock-echo") must never enter evaluation.
+    model_id = str(record.get("model") or "").strip().lower()
+    provider_id = str(record.get("provider") or "").strip().lower()
+    if model_id in {"mock-echo", "mock", "mock-budget"} or provider_id == "mock":
+        issues.append(
+            QAIssue(idx, "MOCK_PROVIDER", "-",
+                    "record carries mock provider/model provenance")
+        )
+
     if status == STATUS_EMPTY_SOURCE:
         return issues, idx
 
@@ -360,7 +370,8 @@ def main() -> int:
     # Missing file or structural issues are exit-worthy; heuristic warnings are not.
     has_structural = any(
         code in report["issues_by_code"]
-        for code in ("FILE_MISSING", "INVALID_RECORD", "DUPLICATE_IDX", "MISSING_TRANSLATION")
+        for code in ("FILE_MISSING", "INVALID_RECORD", "DUPLICATE_IDX",
+                     "MISSING_TRANSLATION", "MOCK_PROVIDER")
     )
     return 2 if has_structural else 0
 

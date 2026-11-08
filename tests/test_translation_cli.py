@@ -115,8 +115,12 @@ def test_interrupted_job_recovery_via_cli(tmp_path, monkeypatch):
         "--src", str(src), "--out", str(out),
         "--summary-out", str(tmp_path / "s1.json"), "--batch-size", "2",
         "--max-retries", "0",
+        "--error-log", str(tmp_path / "errors_run1.jsonl"),
     ])
     assert td.main() == 1  # finished with failed records
+    # Issue #6 test-isolation regression: failed records go to the
+    # EXPLICIT temporary error log, never to the real data/ directory.
+    assert (tmp_path / "errors_run1.jsonl").exists()
 
     # Resume with a healthy provider: only the missing records are sent.
     monkeypatch.setattr(td, "MockProvider", original_mock, raising=True)
@@ -124,6 +128,7 @@ def test_interrupted_job_recovery_via_cli(tmp_path, monkeypatch):
         "translate_dataset.py", "--provider", "mock",
         "--src", str(src), "--out", str(out),
         "--summary-out", str(tmp_path / "s2.json"), "--batch-size", "3",
+        "--error-log", str(tmp_path / "errors_run2.jsonl"),
     ])
     assert td.main() == 0
     lines = [json.loads(l) for l in out.read_text(encoding="utf-8").splitlines() if l.strip()]

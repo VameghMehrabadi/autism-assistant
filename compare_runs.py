@@ -28,6 +28,8 @@ import numpy as np
 import pandas as pd
 
 import config
+import dataset_guard
+import translation_alignment
 from facts import CATEGORY_KEYS
 from main import run_pipeline
 
@@ -74,6 +76,21 @@ def parse_args() -> argparse.Namespace:
         help="Read-only verification that persisted runs used equivalent "
              "records, thresholds, and configurations; prints the alignment "
              "report and exits",
+    )
+    p.add_argument(
+        "--verify-translation-alignment",
+        action="store_true",
+        help="Issue #6: read-only source-to-Persian alignment validation "
+             "(IDs, structure, status, coverage) between the English source "
+             "export and the Persian dataset; exits 2 on structural failure "
+             "or incomplete coverage",
+    )
+    p.add_argument(
+        "--allow-partial-coverage",
+        action="store_true",
+        help="Issue #6: tolerate an incomplete Persian dataset for runs 4/5 "
+             "(coverage is reported; structural failures still refuse). "
+             "Both runs always use the same eligible record set",
     )
     return p.parse_args()
 
@@ -181,6 +198,24 @@ def render_comparison_markdown(summaries: list[dict], table: pd.DataFrame) -> st
             f"{s['model_key']} | {s['confident_rate']:.1%} | {s['mean_top_score']} | "
             f"{' → '.join(s['ranking_weak_to_strong'])} |"
         )
+
+    fa_covered = [s for s in summaries if s.get("translation_coverage")]
+    if fa_covered:
+        lines += [
+            "",
+            "## Persian dataset coverage (runs 4-5)",
+            "",
+        ]
+        for s in fa_covered:
+            cov = s["translation_coverage"]
+            lines.append(
+                f"- `{s['id']}`: coverage {cov['coverage_pct']}% "
+                f"({cov['eligible_count']}/{cov['source_count']} eligible "
+                f"records; complete={cov['complete']}) — comparing English "
+                "runs 1-3 with Persian runs 4-5 is a cross-language "
+                "condition comparison, not an isolated language effect, "
+                "and cosine similarity is not a probability."
+            )
 
     lines += [
         "",
@@ -368,6 +403,20 @@ def main() -> int:
             return 4
         return 0
 
+    if args.verify_translation_alignment:
+        report = translation_alignment.verify_translation_alignment(
+            config.DATA_DIR / "mentalchat16k_en_for_translation.jsonl",
+            config.PERSIAN_DATASET_PATH,
+        )
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        if report.get("status") in ("SOURCE_MISSING", "TARGET_MISSING"):
+            return 2
+        if not report["structurally_valid"]:
+            return 2
+        if not report["complete"] and not args.allow_partial_coverage:
+            return 2
+        return 0
+
     limit = args.limit if args.limit is not None else config.SAMPLE_LIMIT
     runs = selected_runs(args.only)
 
@@ -383,6 +432,55 @@ def main() -> int:
             file=sys.stderr,
         )
         return 2
+
+    # Issue #6 — Persian dataset safety gates (runs 4/5 only; runs 1-3 use
+    # the English dataset and are unaffected). Fail closed BEFORE embedding.
+    fa_alignment = None
+    if needs_fa:
+        try:
+            dataset_guard.assert_real_dataset(fa_path)
+        except dataset_guard.MockDatasetError as exc:
+            print(f"[compare] ERROR: {exc}", file=sys.stderr)
+            return 2
+        fa_alignment = translation_alignment.verify_translation_alignment(
+            config.DATA_DIR / "mentalchat16k_en_for_translation.jsonl",
+            fa_path,
+        )
+        if not fa_alignment["structurally_valid"]:
+            print(
+                "[compare] ERROR: source-to-Persian alignment validation "
+                f"failed ({fa_alignment['status']}; "
+                f"missing={fa_alignment['missing_ids_count']}, "
+                f"unexpected={fa_alignment['unexpected_ids_count']}, "
+                f"duplicates={len(fa_alignment['duplicate_target_ids'])}, "
+                f"structural mismatches="
+                f"{len(fa_alignment['structural_mismatch_records'])}, "
+                f"empty translated="
+                f"{len(fa_alignment['empty_translated_records'])}) — runs 4/5 "
+                "refused. Inspect with: python compare_runs.py "
+                "--verify-translation-alignment",
+                file=sys.stderr,
+            )
+            return 2
+        if not fa_alignment["complete"] and not args.allow_partial_coverage:
+            print(
+                "[compare] ERROR: Persian dataset coverage is "
+                f"{fa_alignment['coverage_pct']}% "
+                f"({fa_alignment['eligible_count']} of "
+                f"{fa_alignment['source_count']} source records eligible) "
+                "and partial coverage was not authorized — refusing runs "
+                "4/5. Pass --allow-partial-coverage to run on the same "
+                "eligible subset, or complete the translation.",
+                file=sys.stderr,
+            )
+            return 2
+        print(
+            f"[compare] Persian dataset validated: coverage "
+            f"{fa_alignment['coverage_pct']}% "
+            f"({fa_alignment['eligible_count']}/{fa_alignment['source_count']}"
+            f", complete={fa_alignment['complete']}) — both fa runs use the "
+            "same eligible record set"
+        )
 
     config.COMPARISON_DIR.mkdir(parents=True, exist_ok=True)
     summaries: list[dict] = []
@@ -413,6 +511,13 @@ def main() -> int:
                 },
             )
         summaries.append(summarize_run(report, run_cfg))
+        if run_cfg["dataset"] == "fa" and fa_alignment is not None:
+            summaries[-1]["translation_coverage"] = {
+                "coverage_pct": fa_alignment["coverage_pct"],
+                "eligible_count": fa_alignment["eligible_count"],
+                "source_count": fa_alignment["source_count"],
+                "complete": fa_alignment["complete"],
+            }
 
     table = build_comparison_table(summaries)
     csv_path = config.COMPARISON_DIR / "comparison_summary.csv"
