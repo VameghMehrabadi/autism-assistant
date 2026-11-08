@@ -27,6 +27,8 @@ PROTECTED_DATA_PATHS = (
     "data/mentalchat16k_fa.mock_sample.jsonl",
     "data/translation_errors.jsonl",
     "data/translation_mock_summary.json",
+    "data/translation_summary.json",
+    "data/translation_review.jsonl",
     "data/gold/gold_split_manifest.json",
 )
 
@@ -122,15 +124,21 @@ def test_cli_provider_failure_writes_only_temporary_error_log(
 
     monkeypatch.setattr(td, "MockProvider", lambda: FailingProvider())
     error_log = tmp_path / "errors.jsonl"
+    summary_out = tmp_path / "summary.json"
     monkeypatch.setattr("sys.argv", [
         "translate_dataset.py", "--provider", "mock",
         "--src", str(src), "--out", str(tmp_path / "out.jsonl"),
-        "--summary-out", str(tmp_path / "summary.json"),
+        "--summary-out", str(summary_out),
         "--error-log", str(error_log),
     ])
     assert td.main() == 1  # finished with failed records
 
     assert error_log.exists()  # explicit temporary destination
+    # the temporary summary output is actually used and reflects the failure
+    assert summary_out.exists()
+    summary = json.loads(summary_out.read_text(encoding="utf-8"))
+    assert summary["engine"]["translated"] == 0
+    assert summary["engine"]["total_source"] == 3
     _protected_unchanged(real_before)  # nothing else was touched
 
 
@@ -169,12 +177,15 @@ def test_retry_and_resume_tests_do_not_touch_protected_paths(
             raise td.TranslationError("api", "synthetic outage")
 
     monkeypatch.setattr(td, "MockProvider", lambda: FailOnceProvider())
+    summary_out = tmp_path / "summary.json"
     monkeypatch.setattr("sys.argv", [
         "translate_dataset.py", "--provider", "mock",
         "--src", str(src), "--out", str(tmp_path / "out.jsonl"),
+        "--summary-out", str(summary_out),
         "--error-log", str(tmp_path / "errors.jsonl"),
     ])
     assert td.main() == 1
+    assert summary_out.exists()  # temporary summary used, not the real one
     _protected_unchanged(real_before)
 
 
