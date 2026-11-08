@@ -66,11 +66,11 @@ def test_gold_split_group_isolation(tmp_path):
     ev = set(partitions["gold_evaluation"])
     assert not (cal & ev)
     for position in set(cal) | set(ev):
-        key = manifest["group_keys"][str(position)]
+        key = manifest["group_key_fingerprints"][str(position)]
         owners = [
             other
             for other in set(cal) | set(ev)
-            if manifest["group_keys"][str(other)] == key
+            if manifest["group_key_fingerprints"][str(other)] == key
         ]
         assert len(owners) == 1  # the whole group sits in one partition
 
@@ -490,3 +490,115 @@ def test_comparison_report_carries_non_diagnostic_language(tmp_path):
     assert "no encoder is clinically superior" in md
     # the default threshold is never claimed calibrated
     assert "calibrated on human labels" not in md
+
+
+# --------------------------------------------------------------------------
+# PR #40 privacy remediation — no raw group keys in persisted artifacts
+# --------------------------------------------------------------------------
+
+
+def test_group_key_fingerprint_deterministic_and_distinct():
+    from gold_split import group_key_fingerprint
+
+    key_a = "input:synthetic conversation alpha"
+    key_b = "input:synthetic conversation beta"
+    key_a2 = "input:synthetic conversation alpha"  # same source group
+    fa, fb, fa2 = (
+        group_key_fingerprint(key_a),
+        group_key_fingerprint(key_b),
+        group_key_fingerprint(key_a2),
+    )
+    assert fa == fa2                      # deterministic per source group
+    assert fa != fb                       # different groups -> different fp
+    assert len(fa) == 64                  # full sha256 hex
+    assert all(c in "0123456789abcdef" for c in fa)
+    assert "alpha" not in fa              # non-reversible
+
+
+def test_manifest_stores_only_group_key_fingerprints(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(gold_split, "GOLD_DIR", tmp_path / "gold")
+    items = _samples(400)
+    manifest = gold_split.build_gold_split(items, target_size=200, seed=7)
+    raw_manifest = json.dumps(manifest)
+    # no raw group key (the "input:"/"full:"/"hash:" prefixed text) survives
+    assert '"input:' not in raw_manifest
+    assert '"full:' not in raw_manifest
+    assert '"hash:' not in raw_manifest
+    fingerprints = manifest["group_key_fingerprints"]
+    assert len(fingerprints) == manifest["verification"]["n_selected"]
+    assert all(
+        len(fp) == 64 and all(c in "0123456789abcdef" for c in fp)
+        for fp in fingerprints.values()
+    )
+    # distinct group keys -> distinct fingerprints
+    distinct_fps = {
+        fp for key, fp in fingerprints.items()
+    }
+    distinct_keys = set(manifest["group_key_fingerprints"].values())
+    assert len(distinct_fps) == len(distinct_keys)
+    assert manifest["group_key_fingerprint_algorithm"] == "sha256-utf8-hex-v1"
+
+
+def test_template_provenance_fingerprinted_not_raw(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(gold_split, "GOLD_DIR", tmp_path / "gold")
+    items = _samples(300)
+    source = tmp_path / "source.jsonl"
+    with source.open("w", encoding="utf-8") as handle:
+        for item in items:
+            handle.write(
+                json.dumps({"idx": item.idx, "text": item.text}) + "\n"
+            )
+    summary = gold_split.generate_gold_split(
+        target_size=200, seed=7, source_path=source
+    )
+    template = [
+        json.loads(line)
+        for line in Path(summary["template"]).read_text(
+            encoding="utf-8"
+        ).splitlines()
+    ]
+    for record in template:
+        prov = record["provenance"]
+        fp = prov["group_key_fingerprint"]
+        assert len(fp) == 64 and all(
+            c in "0123456789abcdef" for c in fp
+        )
+        assert "group_key" not in prov  # raw key never persisted
+
+
+def test_tracked_gold_artifacts_contain_no_raw_group_keys(tmp_path):
+    """Privacy regression: every COMMITTED gold artifact must be free of
+    raw conversation-derived group keys (the PR #40 audit finding)."""
+    import subprocess
+
+    repo = Path(__file__).resolve().parents[1]
+    tracked = subprocess.run(
+        ["git", "ls-files", "data/gold/"],
+        capture_output=True, text=True, cwd=repo,
+    ).stdout.split()
+    assert tracked, "no tracked gold artifacts found"
+    violations = []
+    for rel in tracked:
+        content = (repo / rel).read_text(encoding="utf-8")
+        if '"input:' in content or '"full:' in content or '"hash:' in content:
+            violations.append(rel)
+    assert violations == []
+
+
+def test_worklist_remains_gitignored_and_untracked(tmp_path):
+    import subprocess
+
+    repo = Path(__file__).resolve().parents[1]
+    template_rel = "data/gold/gold_annotation_template.jsonl"
+    check = subprocess.run(
+        ["git", "check-ignore", template_rel],
+        capture_output=True, text=True, cwd=repo,
+    )
+    assert check.returncode == 0, "worklist must stay gitignored"
+    tracked = subprocess.run(
+        ["git", "ls-files", template_rel],
+        capture_output=True, text=True, cwd=repo,
+    ).stdout.split()
+    assert tracked == [], "worklist must never be committed"

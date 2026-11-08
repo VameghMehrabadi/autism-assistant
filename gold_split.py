@@ -43,6 +43,24 @@ CATEGORIES = ("A", "B", "C", "D", "E", "F", "G")
 PARTITION_CALIBRATION = "gold_calibration"
 PARTITION_EVALUATION = "gold_evaluation"
 
+# Issue #8 privacy remediation (PR #40 audit): group keys ARE derived from
+# conversation text ("input:<normalized text>") and must never be persisted.
+# The manifest and template store only non-reversible fingerprints.
+GROUP_KEY_FINGERPRINT_ALGORITHM = "sha256-utf8-hex-v1"
+
+
+def group_key_fingerprint(group_key: str) -> str:
+    """Deterministic, non-reversible fingerprint of a full group key.
+
+    SHA-256 over the complete key (including its ``input:`` / ``full:`` /
+    ``hash:`` prefix), UTF-8 encoded, full 64-hex digest. The same source
+    group always produces the same fingerprint; different source groups
+    produce different fingerprints (audit-tested).
+    """
+    import hashlib
+
+    return hashlib.sha256(group_key.encode("utf-8")).hexdigest()
+
 
 def dataset_file_sha256(path: Path) -> str:
     import hashlib
@@ -174,9 +192,11 @@ def build_gold_split(
         "record_hashes": {
             str(pos): hashes[pos] for pos in selected_positions
         },
-        "group_keys": {
-            str(pos): group_keys[pos] for pos in selected_positions
+        "group_key_fingerprints": {
+            str(pos): group_key_fingerprint(group_keys[pos])
+            for pos in selected_positions
         },
+        "group_key_fingerprint_algorithm": GROUP_KEY_FINGERPRINT_ALGORITHM,
         "verification": verification,
     }
     return manifest
@@ -201,7 +221,7 @@ def write_template(
         manifest["partitions"][PARTITION_CALIBRATION]
         + manifest["partitions"][PARTITION_EVALUATION]
     )
-    group_keys = manifest["group_keys"]
+    group_fingerprints = manifest["group_key_fingerprints"]
     generated = manifest["generated_utc"]
     with out_path.open("w", encoding="utf-8") as handle:
         for gold_number, position in enumerate(positions, start=1):
@@ -225,7 +245,8 @@ def write_template(
                             "record_hash": manifest["record_hashes"][
                                 str(position)
                             ],
-                            "group_key": group_keys[str(position)],
+                            "group_key_fingerprint":
+                                group_fingerprints[str(position)],
                             "dataset_sha256": source_sha
                             or manifest.get("source_sha256"),
                             "selection_seed": manifest["seed"],

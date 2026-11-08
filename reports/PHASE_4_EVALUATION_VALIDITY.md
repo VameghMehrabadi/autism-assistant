@@ -93,8 +93,10 @@ Created under `data/gold/` (kept **separate** from development data and model ou
   the existing Phase-2 grouping machinery — records are selected and
   partitioned **whole-group** (297 groups), so related records can never
   leak across partitions. Seed (42), algorithm, dataset sha256
-  (`a558909c0c62d05d…`), group keys and leakage verification are recorded
-  in `data/gold/gold_split_manifest.json` (content-free, committed).
+  (`a558909c0c62d05d…`), per-record partitions, leakage verification and
+  **group-key fingerprints** (sha256-utf8-hex-v1 of the full group key —
+  the key itself is conversation-derived text and is never persisted) are
+  recorded in `data/gold/gold_split_manifest.json`.
 - Partitions: `gold_calibration` (105 records) for threshold selection,
   `gold_evaluation` (195 records) held out for final metrics. Verified
   disjoint at record and group level (`leak_free: true`).
@@ -103,6 +105,16 @@ Created under `data/gold/` (kept **separate** from development data and model ou
   multi-label `labels`, `status: "pending"`, null `labeler_id`, and full
   provenance (record hash, group key, dataset sha256, seed). **Contains
   raw conversation text — gitignored by design, never committed.**
+- **Development-split limitation (honest):** no historical Phase-2
+  dev/eval manifest exists for this dataset (the labeling runs passed no
+  `split` argument), so gold-vs-development overlap cannot be computed
+  retroactively. The prior full-corpus encoder similarity computation was
+  **unsupervised labeling with a fixed 0.35 threshold** — not threshold
+  fitting and not supervised training — and no human-derived threshold
+  calibration has occurred yet. Safeguard: any future training or
+  development partition must exclude the gold calibration and evaluation
+  groups via the same canonical group-key fingerprint algorithm
+  (sha256-utf8-hex-v1).
 
 ### Human annotation requirements
 
