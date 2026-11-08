@@ -1,9 +1,15 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Autism Assistant gold evaluation record",
-  "description": "One human-labeled evaluation record. Model-generated labels are forbidden in this file: origin must be 'human' and labeler_id must identify a human labeler.",
+  "description": "One human-labeled evaluation record. Model-generated labels are forbidden in this file: origin must be 'human' and labeler_id must identify a human labeler. Issue #8: multi-label annotations (final_labels) are supported; exactly one of final_label / final_labels must be present; status marks worklist entries that are not yet gold labels.",
   "type": "object",
-  "required": ["gold_id", "source_idx", "labeler_id", "origin", "round", "final_label"],
+  "required": [
+    "gold_id",
+    "source_idx",
+    "labeler_id",
+    "origin",
+    "round"
+  ],
   "properties": {
     "gold_id": {
       "type": "string",
@@ -34,12 +40,30 @@
     },
     "first_label": {
       "type": "string",
-      "enum": ["A", "B", "C", "D", "E", "F", "G", "UNSURE"],
+      "enum": [
+        "A",
+        "B",
+        "C",
+        "D",
+        "E",
+        "F",
+        "G",
+        "UNSURE"
+      ],
       "description": "Round-1 label before any revision."
     },
     "final_label": {
       "type": "string",
-      "enum": ["A", "B", "C", "D", "E", "F", "G", "UNSURE"],
+      "enum": [
+        "A",
+        "B",
+        "C",
+        "D",
+        "E",
+        "F",
+        "G",
+        "UNSURE"
+      ],
       "description": "Final label after revision/adjudication. UNSURE records are excluded from per-category metrics but retained."
     },
     "adjudicated": {
@@ -49,7 +73,11 @@
     },
     "confidence": {
       "type": "string",
-      "enum": ["sure", "leaning", "guess"],
+      "enum": [
+        "sure",
+        "leaning",
+        "guess"
+      ],
       "description": "Labeler's own ordinal certainty — an ordinal self-report, NOT a calibrated probability."
     },
     "notes": {
@@ -65,7 +93,58 @@
       "type": "string",
       "pattern": "^v[0-9]+$",
       "description": "Version of the gold set this record belongs to (matches the file suffix)."
+    },
+    "final_labels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "A",
+          "B",
+          "C",
+          "D",
+          "E",
+          "F",
+          "G",
+          "UNSURE"
+        ]
+      },
+      "uniqueItems": true,
+      "description": "Multi-label annotation (Issue #8): every category that substantially applies. An empty list is a deliberate 'no applicable category' annotation. UNSURE must appear alone. Mutually exclusive with final_label."
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "in_progress",
+        "annotated"
+      ],
+      "description": "Worklist status. Only 'annotated' records are gold labels; pending/in_progress records are never counted as gold."
+    },
+    "partition": {
+      "type": "string",
+      "enum": [
+        "gold_calibration",
+        "gold_evaluation"
+      ],
+      "description": "Which gold partition the record belongs to (calibration selects thresholds; evaluation is held out)."
+    },
+    "provenance": {
+      "type": "object",
+      "description": "Selection provenance (record hash, group key, dataset sha256, selection seed, generated_utc)."
     }
   },
-  "additionalProperties": false
+  "additionalProperties": false,
+  "oneOf": [
+    {
+      "required": [
+        "final_label"
+      ]
+    },
+    {
+      "required": [
+        "final_labels"
+      ]
+    }
+  ]
 }
