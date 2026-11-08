@@ -34,6 +34,7 @@ from typing import Any
 
 import config
 from data_loader import LoadReport, Sample, load_samples_en
+from license_guard import assert_export_allowed, override_flag_help
 
 SOURCE_FIELDS: tuple[str, ...] = ("instruction", "input", "output")
 
@@ -46,6 +47,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--out",
         type=str,
         default=str(config.DATA_DIR / "mentalchat16k_en_for_translation.jsonl"),
+    )
+    p.add_argument(
+        "--acknowledge-license",
+        action="store_true",
+        help=override_flag_help(),
     )
     return p.parse_args(argv)
 
@@ -65,14 +71,25 @@ def write_export(
     *,
     dataset_total: int | None = None,
     load_report: LoadReport | None = None,
+    acknowledge_license: bool = False,
 ) -> dict[str, Any]:
     """Write the JSONL export plus the completeness sidecar; returns the meta.
 
     ``dataset_total`` is the number of source records available **before**
     any limit (from the loader's ``LoadReport.dataset_total``). ``complete``
     is True only when every source record was exported.
+
+    Licensing (Issue #13): destinations outside the project workspace are
+    public distribution locations — refused while the upstream license
+    status is unclear, unless ``acknowledge_license`` is set. Checked before
+    any file is written.
     """
     out_path = Path(out_path)
+    assert_export_allowed(
+        out_path,
+        kind="the raw MentalChat16K export (English records)",
+        acknowledge_license=acknowledge_license,
+    )
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     n_empty = 0
@@ -125,6 +142,12 @@ def write_export(
 
 
 def main(argv: list[str] | None = None) -> int:
+    from storage_security import storage_security_exit_code
+
+    rc = storage_security_exit_code()
+    if rc:
+        return rc
+
     args = parse_args(argv)
     limit = args.limit if args.limit is not None else 0  # default: full dataset
     if limit is not None and limit <= 0:
@@ -136,6 +159,7 @@ def main(argv: list[str] | None = None) -> int:
         args.out,
         dataset_total=load_report.dataset_total,
         load_report=load_report,
+        acknowledge_license=args.acknowledge_license,
     )
     if not meta["complete"]:
         return 3  # distinguishable exit code for incomplete exports

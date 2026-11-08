@@ -33,7 +33,8 @@ def test_gap_report_includes_top_score_stats():
     report = build_report(df, scores, threshold=0.35)
     stats = report["top_score_stats"]
     assert stats == {
-        "mean": 0.6, "median": 0.6, "p25": 0.6, "p75": 0.6, "min": 0.6, "max": 0.6,
+        "mean": 0.6, "median": 0.6, "p05": 0.6, "p25": 0.6, "p75": 0.6,
+        "p95": 0.6, "min": 0.6, "max": 0.6,
     }
 
 

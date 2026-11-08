@@ -30,6 +30,30 @@ def _resolve_cache_dir() -> Path:
 
 CACHE_DIR: Path = _resolve_cache_dir()
 
+# --- کش وزن مدل‌ها / Model-weights cache (Issue #14) ---
+# مسیر کش وزن‌های دانلودشده (models--* از Hugging Face) — جداست از
+# EMBED_CACHE_DIR که فقط امبدینگ‌های محاسبه‌شده را نگه می‌دارد؛ این دو نباید
+# با هم اشتباه گرفته شوند.
+# Resolution order: AUTISM_MODEL_CACHE_DIR (app-specific override)
+# > SENTENCE_TRANSFORMERS_HOME (the standard Sentence-Transformers variable)
+# > CACHE_DIR (existing layout — keeps already-downloaded weights valid).
+# Environment variables must be set BEFORE launching Python: huggingface_hub
+# reads HF_HUB_OFFLINE / cache locations when its modules are first imported.
+def _resolve_model_cache_dir() -> tuple[Path, str]:
+    """Return (model_weights_cache_dir, which_setting_won)."""
+    override = os.environ.get("AUTISM_MODEL_CACHE_DIR")
+    if override:
+        return Path(override), "AUTISM_MODEL_CACHE_DIR"
+    st_home = os.environ.get("SENTENCE_TRANSFORMERS_HOME")
+    if st_home:
+        return Path(st_home), "SENTENCE_TRANSFORMERS_HOME"
+    return CACHE_DIR, "config.CACHE_DIR (default)"
+
+
+MODEL_CACHE_DIR: Path
+MODEL_CACHE_SOURCE: str
+MODEL_CACHE_DIR, MODEL_CACHE_SOURCE = _resolve_model_cache_dir()
+
 for _p in (DATA_DIR, OUTPUT_DIR, CACHE_DIR, PROMPTS_DIR, LOG_DIR):
     _p.mkdir(parents=True, exist_ok=True)
 
@@ -55,6 +79,11 @@ GENERIC_COUNSELOR_MARKERS: tuple[str, ...] = (
 # نسخه‌ی فارسی ترجمه‌شده‌ی MentalChat16K (JSONL یا CSV).
 # Persian translation of MentalChat16K (JSONL or CSV).
 PERSIAN_DATASET_PATH: Path = DATA_DIR / "mentalchat16k_fa.jsonl"
+# داده‌ی موک هرگز به‌صورت ضمنی به‌عنوان دیتاست واقعی بارگذاری نمی‌شود؛
+# تنها با پرچم صریح --allow-mock مجاز است (Issue #25).
+# Mock datasets are never loaded implicitly as real data; loading requires
+# the explicit --allow-mock opt-in (Issue #25).
+ALLOW_MOCK_DATASET: bool = False
 
 # --- مدل‌های امبدینگ / Embedding models ---
 # کلید کوتاه → شناسه‌ی Hugging Face + شیوه‌ی prefix (برای e5 ضروری است).
