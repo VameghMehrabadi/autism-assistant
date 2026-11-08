@@ -75,6 +75,13 @@ def parse_args() -> argparse.Namespace:
              "records, thresholds, and configurations; prints the alignment "
              "report and exits",
     )
+    p.add_argument(
+        "--allow-mock",
+        action="store_true",
+        help="Explicitly allow a MOCK dataset for pipeline-mechanics testing. "
+             "Mock runs are labeled dataset_kind=mock and are ineligible for "
+             "production comparison claims. Never use for real evaluation.",
+    )
     return p.parse_args()
 
 
@@ -101,6 +108,7 @@ def summarize_run(report: dict, run_cfg: dict) -> dict:
     pc = report["per_category"]
     run_meta = report.get("run") or {}
     top_score_stats = report.get("top_score_stats")
+    dataset_kind = run_meta.get("dataset_kind")
     return {
         "id": run_cfg["id"],
         "title": run_cfg["title"],
@@ -119,6 +127,10 @@ def summarize_run(report: dict, run_cfg: dict) -> dict:
             "across models"
         ),
         "text_window": run_meta.get("text_window"),
+        "status": run_meta.get("status", "completed"),
+        "blocked_reason": run_meta.get("blocked_reason"),
+        "dataset_kind": dataset_kind,
+        "eligible_for_production_comparison": dataset_kind == "real",
         "embed_prefix": run_meta.get("prefix"),
         "labeler_version": run_meta.get("labeler_version"),
         "dataset_fingerprint": run_meta.get("dataset_fingerprint"),
@@ -141,41 +153,76 @@ def summarize_run(report: dict, run_cfg: dict) -> dict:
 _summarize_run = summarize_run
 
 
+def summarize_blocked_run(run_cfg: dict, reason: str) -> dict:
+    """Summary entry for a run that could not execute (e.g. the real Persian
+    dataset is unavailable). Contains no record counts, scores, or claims."""
+    return {
+        "id": run_cfg["id"], "title": run_cfg["title"],
+        "model_key": run_cfg["model_key"], "fact_lang": run_cfg["fact_lang"],
+        "dataset": run_cfg["dataset"], "status": "BLOCKED",
+        "blocked_reason": reason, "n_samples": None, "confident_rate": None,
+        "threshold": None, "top_score_stats": None, "score_scale_note": "",
+        "text_window": None, "embed_prefix": None, "labeler_version": None,
+        "dataset_fingerprint": None, "dataset_kind": None,
+        "eligible_for_production_comparison": False, "mean_top_score": None,
+        "ranking_weak_to_strong": [], "counts": {}, "shares": {},
+        "multi_counts": {}, "multi_shares": {}, "mean_scores": {},
+        "global_mean_score_per_category": {},
+    }
+
+
 def build_comparison_table(summaries: list[dict]) -> pd.DataFrame:
     rows = []
     for s in summaries:
+        blocked = s.get("status") == "BLOCKED"
         row = {
-            "run": s["id"],
-            "title": s["title"],
-            "model": s["model_key"],
-            "fact_lang": s["fact_lang"],
-            "n_samples": s["n_samples"],
-            "confident_rate": s["confident_rate"],
-            "mean_top_score": s["mean_top_score"],
-            "weakest": " > ".join(s["ranking_weak_to_strong"][:2]),
-            "strongest": " > ".join(s["ranking_weak_to_strong"][-2:]),
+            "run": s["id"], "title": s["title"],
+            "model": s.get("model_key", ""), "fact_lang": s.get("fact_lang", ""),
+            "status": s.get("status", "completed"), "n_samples": s.get("n_samples"),
+            "confident_rate": s.get("confident_rate"),
+            "mean_top_score": s.get("mean_top_score"),
+            "weakest": " > ".join(s["ranking_weak_to_strong"][:2]) if not blocked else "",
+            "strongest": " > ".join(s["ranking_weak_to_strong"][-2:]) if not blocked else "",
         }
         for c in CATEGORY_KEYS:
-            row[f"count_{c}"] = s["counts"][c]
-            row[f"share_{c}"] = s["shares"][c]
-            row[f"multi_{c}"] = s.get("multi_counts", {}).get(c, 0)
-            row[f"mean_{c}"] = s["mean_scores"][c]
+            counts = s.get("counts") or {}
+            shares = s.get("shares") or {}
+            multis = s.get("multi_counts") or {}
+            means = s.get("mean_scores") or {}
+            row[f"count_{c}"] = counts.get(c)
+            row[f"share_{c}"] = shares.get(c)
+            row[f"multi_{c}"] = multis.get(c, 0)
+            row[f"mean_{c}"] = means.get(c)
         rows.append(row)
     return pd.DataFrame(rows)
 
 
 def render_comparison_markdown(summaries: list[dict], table: pd.DataFrame) -> str:
+    completed = [s for s in summaries if s.get("status") != "BLOCKED"]
+    blocked = [s for s in summaries if s.get("status") == "BLOCKED"]
     lines = [
         "# Five-way embedding comparison",
         "",
         "Persian MentalChat16K × autism facts (A–G).",
         "",
+    ]
+    if blocked:
+        lines += [
+            "## BLOCKED runs (NOT executed — no claims made)",
+            "",
+            "| ID | Reason |",
+            "|----|--------|",
+        ]
+        for s in blocked:
+            lines.append(f"| `{s['id']}` | {s.get('blocked_reason', '')} |")
+        lines.append("")
+    lines += [
         "## Runs",
         "",
         "| # | ID | Facts | Dataset | Model | Confident% | Mean top-score | Weak→Strong |",
         "|---|----|-------|---------|-------|------------|----------------|-------------|",
     ]
-    for i, s in enumerate(summaries, start=1):
+    for i, s in enumerate(completed, start=1):
         lines.append(
             f"| {i} | `{s['id']}` | {s['fact_lang']} | {s['dataset']} | "
             f"{s['model_key']} | {s['confident_rate']:.1%} | {s['mean_top_score']} | "
@@ -189,7 +236,7 @@ def render_comparison_markdown(summaries: list[dict], table: pd.DataFrame) -> st
         "| Run | " + " | ".join(CATEGORY_KEYS) + " |",
         "|-----|" + "|".join(["------"] * len(CATEGORY_KEYS)) + "|",
     ]
-    for s in summaries:
+    for s in completed:
         shares = " | ".join(f"{s['shares'][c]:.1%}" for c in CATEGORY_KEYS)
         lines.append(f"| `{s['id']}` | {shares} |")
 
@@ -200,7 +247,7 @@ def render_comparison_markdown(summaries: list[dict], table: pd.DataFrame) -> st
         "| Run | " + " | ".join(CATEGORY_KEYS) + " |",
         "|-----|" + "|".join(["------"] * len(CATEGORY_KEYS)) + "|",
     ]
-    for s in summaries:
+    for s in completed:
         multi = s.get("multi_shares") or {
             c: 0.0 for c in CATEGORY_KEYS
         }
@@ -214,7 +261,7 @@ def render_comparison_markdown(summaries: list[dict], table: pd.DataFrame) -> st
         "| Run | " + " | ".join(CATEGORY_KEYS) + " |",
         "|-----|" + "|".join(["------"] * len(CATEGORY_KEYS)) + "|",
     ]
-    for s in summaries:
+    for s in completed:
         gmeans = s.get("global_mean_score_per_category") or s["mean_scores"]
         means = " | ".join(str(gmeans[c]) for c in CATEGORY_KEYS)
         lines.append(f"| `{s['id']}` | {means} |")
@@ -254,6 +301,7 @@ def render_comparison_markdown(summaries: list[dict], table: pd.DataFrame) -> st
 
 
 def plot_comparison(summaries: list[dict], out_path: Path) -> None:
+    summaries = [s for s in summaries if s.get("status") != "BLOCKED"]
     if not summaries:
         return
     n_runs = len(summaries)
@@ -372,17 +420,17 @@ def main() -> int:
     runs = selected_runs(args.only)
 
     fa_path = Path(args.dataset_path) if args.dataset_path else config.PERSIAN_DATASET_PATH
-    needs_fa = any(r["dataset"] == "fa" for r in runs)
-    if needs_fa and not fa_path.exists():
-        print(
-            f"[compare] ERROR: Persian dataset missing: {fa_path}\n"
-            "1) python export_for_translation.py --limit 500\n"
-            "2) Translate with prompts/semantic_persian_translation.txt (GPT-4+)\n"
-            "3) Save as data/mentalchat16k_fa.jsonl\n"
-            "Note: runs 1-3 use the English dataset and do not need this file.",
-            file=sys.stderr,
-        )
-        return 2
+    fa_available = fa_path.exists()
+    # Issue #25: when the real Persian dataset is absent, FA runs are recorded
+    # as BLOCKED in the report instead of silently substituting mock/fixture
+    # data. Mock data is only admitted with the explicit --allow-mock opt-in,
+    # and mock results are labeled ineligible for production claims.
+    blocked_reason = (
+        "BLOCKED: real Persian translated dataset not found at "
+        f"{fa_path}. Runs 4/5 require the complete translated dataset "
+        "(export + real translation). The five-record test fixture and mock "
+        "samples are NOT valid substitutes and were not used."
+    )
 
     config.COMPARISON_DIR.mkdir(parents=True, exist_ok=True)
     summaries: list[dict] = []
@@ -394,6 +442,10 @@ def main() -> int:
         print(f"# {run_cfg['title']}")
         print("#" * 72)
 
+        if run_cfg["dataset"] == "fa" and not fa_available and not args.allow_mock:
+            print(f"[compare] BLOCKED: {run_cfg['id']} — real Persian dataset missing")
+            summaries.append(summarize_blocked_run(run_cfg, blocked_reason))
+            continue
         if args.skip_existing and report_path.exists():
             print(f"[compare] Skipping existing run -> {report_path}")
             report = json.loads(report_path.read_text(encoding="utf-8"))
@@ -407,6 +459,7 @@ def main() -> int:
                 dataset=ds,
                 dataset_path=ds_path,
                 output_dir=run_dir,
+                allow_mock=args.allow_mock if run_cfg["dataset"] == "fa" else None,
                 run_meta={
                     "id": run_cfg["id"],
                     "title": run_cfg["title"],
@@ -435,6 +488,10 @@ def main() -> int:
     print(f"Report: {md_path}")
     print(f"Table:  {csv_path}")
     print(f"Chart:  {chart_path}")
+    blocked = [s for s in summaries if s.get("status") == "BLOCKED"]
+    if blocked:
+        print(f"[compare] WARNING: {len(blocked)} run(s) BLOCKED — see the report.")
+        return 3
     return 0
 
 

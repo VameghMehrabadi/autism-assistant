@@ -104,6 +104,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         choices=["dev", "eval"],
         help="فیلتر بر اساس manifest جداسازی dev/eval (جلوگیری از نشت داده)",
     )
+    p.add_argument(
+        "--allow-mock",
+        action="store_true",
+        help="صریحاً اجازه بده دیتاست موک/تست بارگذاری شود (هرگز برای "
+             "تحلیل واقعی استفاده نشود؛ خروجی dataset_kind=mock علامت می‌خورد)",
+    )
     return p.parse_args(argv)
 
 
@@ -119,6 +125,7 @@ def run_pipeline(
     sampling: str | None = None,
     seed: int | None = None,
     split: str | None = None,
+    allow_mock: bool | None = None,
 ) -> dict:
     """اجرای یک پیکربندی کامل؛ گزارش gap analysis را برمی‌گرداند."""
     if limit is None:
@@ -161,6 +168,7 @@ def run_pipeline(
         sampling=sampling,
         seed=seed,
         split=split,
+        allow_mock=allow_mock,
         return_report=True,
     )
     if not samples:
@@ -178,6 +186,10 @@ def run_pipeline(
         "\u241f".join(texts).encode("utf-8")
     ).hexdigest()[:16]
     meta["dataset_total"] = load_report.dataset_total
+    meta["dataset_kind"] = load_report.dataset_kind  # real | mock | fixture
+    meta["eligible_for_production_comparison"] = (
+        load_report.dataset_kind == "real"
+    )
     embs = labeler.embed_samples(texts)
     scores, prototype_indices = labeler.score_samples(embs, return_matches=True)
     results = labeler.assign_labels(scores, prototype_indices=prototype_indices)
@@ -251,6 +263,7 @@ def main() -> int:
             sampling=args.sampling,
             seed=args.seed,
             split=args.split,
+            allow_mock=args.allow_mock,
         )
     except FileNotFoundError as e:
         print(f"[main] ERROR: {e}", file=sys.stderr)
