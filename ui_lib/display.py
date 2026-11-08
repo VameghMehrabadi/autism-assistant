@@ -65,7 +65,9 @@ def render_label_result(result: dict) -> None:
                 "heuristic, not calibrated confidence."
             )
         st.caption(
-            "Scores are cosine similarities in [-1, 1] — not probabilities."
+            "Scores are cosine similarities in [-1, 1] — not probabilities. "
+            "Thresholds are encoder-specific and require human validation; "
+            "the default 0.35 is uncalibrated."
         )
     with right:
         score_df = build_score_table(result["score_vector"])

@@ -182,6 +182,38 @@ def render_comparison_markdown(summaries: list[dict], table: pd.DataFrame) -> st
             f"{' → '.join(s['ranking_weak_to_strong'])} |"
         )
 
+    # Issue #8 — gold calibration & human evaluation status: per encoder,
+    # state plainly whether 0.35 is calibrated. No human labels exist in
+    # this repository, so the default is reported as uncalibrated.
+    import gold_eval as gold_eval_module
+    import calibration as calibration_module
+
+    gold_report = gold_eval_module.validate_gold_file(
+        config.DATA_DIR / "gold" / "gold_labels_v1.jsonl"
+    )
+    calibration_status = calibration_module.load_calibration()
+    lines += [
+        "",
+        "## Gold calibration & human evaluation status",
+        "",
+        f"- Human-labeled gold records: **{gold_report['n_gold_labels']}** "
+        f"(worklist records: {gold_report['n_records']}, pending: "
+        f"{gold_report['n_pending']}). Thresholds are encoder-specific; "
+        "cosine similarity is not a probability and model outputs are not "
+        "clinical diagnoses.",
+    ]
+    for s_enc in summaries:
+        encoder = s_enc.get("model_key") or "unknown"
+        status = calibration_module.threshold_status_for(
+            encoder, calibration_status
+        )
+        lines.append(f"- `{encoder}`: 0.35 status — {status}.")
+    lines.append(
+        "- Limitations: no encoder is clinically superior by raw cosine "
+        "score; thresholds require human validation before any "
+        "operational use."
+    )
+
     lines += [
         "",
         "## Category share (top-1 %)",

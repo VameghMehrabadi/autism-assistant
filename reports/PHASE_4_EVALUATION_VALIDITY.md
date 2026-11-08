@@ -83,3 +83,97 @@ Created under `data/gold/` (kept **separate** from development data and model ou
 4. **Exact-match input grouping only** for leakage prevention (Phase-2 limitation, unchanged).
 5. MentalChat16K contains almost no autism-specific terminology (Phase-1 finding) — comparison results measure category overlap with a general counseling corpus, not autism-specific performance.
 6. "GPT-3.5 synthetic" provenance remains unverified locally (no network).
+
+## 10. Human-Labeled Gold Evaluation Set & Encoder-Specific Calibration (Issue #8)
+
+### Gold dataset design (implemented)
+
+- Selection: `python gold_split.py --size 300` carves **300 records**
+  (within Issue #8's 200–500 range) from the 16,005-record EN export using
+  the existing Phase-2 grouping machinery — records are selected and
+  partitioned **whole-group** (297 groups), so related records can never
+  leak across partitions. Seed (42), algorithm, dataset sha256
+  (`a558909c0c62d05d…`), group keys and leakage verification are recorded
+  in `data/gold/gold_split_manifest.json` (content-free, committed).
+- Partitions: `gold_calibration` (105 records) for threshold selection,
+  `gold_evaluation` (195 records) held out for final metrics. Verified
+  disjoint at record and group level (`leak_free: true`).
+- Worklist: `data/gold/gold_annotation_template.jsonl` — 300 pending
+  records with stable `gold_id`, `source_idx`, the patient text, empty
+  multi-label `labels`, `status: "pending"`, null `labeler_id`, and full
+  provenance (record hash, group key, dataset sha256, seed). **Contains
+  raw conversation text — gitignored by design, never committed.**
+
+### Human annotation requirements
+
+- Protocol: `data/gold/ANNOTATION_GUIDELINE.md` — operational A–G
+  definitions (identical to `facts.py::CATEGORIES`), inclusion/exclusion
+  criteria, multi-label rules (`UNSURE` stands alone), the empty-list
+  "no applicable category" annotation, pseudonymous `labeler_id`, and the
+  `origin: "human"` governance rule.
+- Governance: `gold_eval.py` accepts **only** `origin == "human"`
+  (model-generated labels are structurally rejected and counted); records
+  with `status != "annotated"` are worklist entries, never gold labels;
+  empty-list labels are deliberate "no category applies" annotations, not
+  missing data; duplicates are rejected explicitly; `partition` and
+  `provenance` are validated and preserved.
+- **Zero human labels exist today.** The acceptance criterion "gold set
+  with genuine human annotations" remains **blocked on human annotators**;
+  nothing in this repository marks the template as annotated.
+
+### Calibration methodology (implemented, pending human data)
+
+- Per encoder: thresholds are selected by deterministic grid search
+  (0.05–0.975, step 0.025) maximizing **macro F1 over categories with
+  support > 0** on the `gold_calibration` partition only; ties resolve to
+  the lower threshold. Per-category thresholds require ≥ 10 positives and
+  ≥ 10 negatives — otherwise the category falls back to the global
+  threshold with an explicit `insufficient_support` status.
+- Sufficiency rule: fewer than 50 human-labeled calibration records →
+  `calibrated: false` with the exact shortfall; model-origin records
+  abort calibration outright.
+- **Current status: `minilm`, `bge-m3`, `e5-large` are all
+  UNCALIBRATED** — no human annotations exist, so the shared 0.35 default
+  is the documented but **uncalibrated** default for every encoder. No
+  threshold in this repository has been calibrated; none will be reported
+  as calibrated until a validated human-labeled calibration partition
+  exists (`data/gold/calibration.json`, written only by the calibration
+  workflow).
+
+### Evaluation metrics & uncertainty (implemented, pending human data)
+
+- `evaluation_metrics.py`: per-category precision/recall/F1/support and
+  confusion counts, micro P/R/F1, macro F1 (full universe — zero-support
+  categories count as 0, reported with support), and a supported-categories
+  macro used only as the calibration criterion. Uncertainty: **group-aware
+  bootstrap** percentile intervals for macro F1 (groups resampled whole,
+  1000 rounds, seeded) with an explicit refusal below 50 records / 30
+  groups — a misleading interval is worse than none.
+- Calibration vs held-out: calibration uses ONLY the `gold_calibration`
+  partition; `gold_evaluation` metrics are computed separately (test-locked
+  — held-out records cannot shift calibration thresholds). Until human
+  labels exist, **all real evaluation metrics are pending**; the functions
+  are tested against hand-computed fixtures only.
+
+### Why cosine similarity is not probability
+
+Cosine similarity is a geometric angle measure in [-1, 1] with no
+probabilistic interpretation; a thresholded similarity is a decision rule,
+not a confidence estimate, and threshold behavior differs per encoder
+(e.g. e5-large concentrates scores near 0.80). Cross-encoder threshold
+comparisons are meaningless without encoder-specific calibration on human
+labels — which does not exist yet.
+
+### Claims status
+
+| Claim | Status |
+|---|---|
+| Gold selection (300 records, group-safe, reproducible) | Implemented + verified |
+| Annotation protocol + unfilled template | Implemented |
+| Gold validation (multi-label, origin enforcement, duplicates) | Implemented + tested |
+| Calibration workflow (per encoder, sufficiency rules) | Implemented + tested on synthetic fixtures |
+| Evaluation metrics + group-bootstrap uncertainty | Implemented + tested on fixtures |
+| Genuine human-labeled calibration | **PENDING — blocked on human annotators** |
+| Encoder-specific calibrated thresholds | **PENDING** |
+| Held-out evaluation metrics on human labels | **PENDING** |
+| Any accuracy/quality claim | **FORBIDDEN until human labels are committed** |
