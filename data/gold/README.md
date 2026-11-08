@@ -20,11 +20,23 @@ and validated by `python gold_eval.py`.** See
   records) using the existing Phase-2 grouping machinery: records are
   selected and partitioned **whole-group** (297 groups for 300 records) so
   related records never leak between the calibration (105) and evaluation
-  (195) partitions. Seed, algorithm, dataset fingerprint, group keys and
-  leakage verification are recorded in `gold_split_manifest.json`
-  (content-free — committed); the per-record worklist
+  (195) partitions. Seed, algorithm, dataset fingerprint, per-record
+  partitions, leakage verification and **group-key fingerprints**
+  (sha256-utf8-hex-v1 of the full group key — never the key itself, which
+  is conversation-derived text) are recorded in
+  `gold_split_manifest.json` (committed); the per-record worklist
   `gold_annotation_template.jsonl` contains raw conversation text and is
   **gitignored by design**.
+- **Development-split limitation (honest):** no historical Phase-2
+  dev/eval manifest was ever materialized for this dataset (the labeling
+  runs passed no `split` argument), so gold-vs-development overlap cannot
+  be computed retroactively. The prior full-corpus labeling was
+  **unsupervised similarity computation with a fixed 0.35 threshold** —
+  not threshold fitting and not supervised training — and no
+  human-derived calibration has occurred yet. Safeguard: any future
+  training/development partition MUST exclude the gold calibration and
+  evaluation groups using the same canonical group-key fingerprint
+  algorithm recorded in the manifest.
 - Reproducible: same dataset + same seed → identical selection.
 
 ## 2. Labeling task
