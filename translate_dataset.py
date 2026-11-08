@@ -50,6 +50,7 @@ from typing import Any
 import config
 import privacy_log
 from data_loader import _parse_tagged_text
+from license_guard import assert_export_allowed, override_flag_help
 from privacy_log import sanitize_value
 
 logger = privacy_log.get_logger("autism.translation")
@@ -908,13 +909,31 @@ class TranslationEngine:
         out_path: str | Path,
         error_log_path: str | Path | None = None,
         limit: int | None = None,
+        *,
+        acknowledge_license: bool = False,
     ) -> EngineSummary:
         """Read source JSONL, resume from existing output, translate, write.
 
         Failed records are reported (never silently skipped) and simply
         remain absent from the output, so a later run retries them.
+
+        Licensing (Issue #13): the translated dataset and the error log are
+        MentalChat16K derivatives — public destinations (outside the project
+        workspace) are refused while the license status is unclear, unless
+        ``acknowledge_license`` is set. Checked before any read/write.
         """
         src_path, out_path = Path(src_path), Path(out_path)
+        assert_export_allowed(
+            out_path,
+            kind="the Persian-translated MentalChat16K dataset",
+            acknowledge_license=acknowledge_license,
+        )
+        if error_log_path:
+            assert_export_allowed(
+                error_log_path,
+                kind="the translation error log (contains source-derived text)",
+                acknowledge_license=acknowledge_license,
+            )
         raw_rows, malformed = _read_jsonl(src_path)
         records: list[SourceRecord] = []
         skipped_non_object = 0
@@ -1060,6 +1079,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--src", type=str,
                    default=str(config.DATA_DIR / "mentalchat16k_en_for_translation.jsonl"))
     p.add_argument("--out", type=str, default=str(config.PERSIAN_DATASET_PATH))
+    p.add_argument("--acknowledge-license", action="store_true",
+                   help=override_flag_help())
     p.add_argument("--prompt", type=str, default=str(SYSTEM_PROMPT_PATH),
                    help="kept for compatibility; the system prompt file is used by the engine")
     p.add_argument("--provider", type=str, default="openai",
@@ -1188,6 +1209,12 @@ def run_probe(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    from storage_security import storage_security_exit_code
+
+    rc = storage_security_exit_code()
+    if rc:
+        return rc
+
     args = parse_args(argv)
     if args.probe:
         return run_probe(args)
@@ -1252,7 +1279,13 @@ def main(argv: list[str] | None = None) -> int:
         inter_request_sleep=args.sleep,
         max_total_tokens=args.max_total_tokens,
     )
-    summary = engine.run(src, out, error_log_path=Path(args.error_log), limit=args.limit)
+    summary = engine.run(
+        src,
+        out,
+        error_log_path=Path(args.error_log),
+        limit=args.limit,
+        acknowledge_license=args.acknowledge_license,
+    )
 
     # Always finish with automated quality control (never proves semantics)
     # and a completeness check against the source (every record accounted for).

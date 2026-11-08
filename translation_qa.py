@@ -27,7 +27,8 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Any
 
-import config
+import config  # (paths used in main())
+from license_guard import assert_export_allowed, override_flag_help
 from data_validation import detect_language
 from translate_dataset import SOURCE_FIELDS, STATUS_EMPTY_SOURCE, STATUS_FLAGGED, STATUS_TRANSLATED
 
@@ -242,6 +243,8 @@ def write_review_file(
     translated_path: str | Path,
     review_path: str | Path,
     report: dict[str, Any] | None = None,
+    *,
+    acknowledge_license: bool = False,
 ) -> int:
     """Write records needing manual review to ``review_path``.
 
@@ -249,11 +252,21 @@ def write_review_file(
     necessarily contains the text a human must read. Issue codes travel in
     the ``qa_issues`` key; logs and reports stay content-free.
 
+    Licensing (Issue #13): the review file carries MentalChat16K-derived
+    text — public destinations (outside the project workspace) are refused
+    while the license status is unclear, unless ``acknowledge_license`` is
+    set. Checked before any file is written.
+
     Completeness: review selection uses the **uncapped** ``idx_issue_codes``
     mapping (falling back to the capped ``issues`` display list only for
     reports produced before that field existed), so records beyond any
     display cap can never be silently dropped from review.
     """
+    assert_export_allowed(
+        review_path,
+        kind="the translation QA review file (contains source-derived text)",
+        acknowledge_license=acknowledge_license,
+    )
     report = report or validate_translation_file(translated_path)
     flagged_idx = set(report.get("flagged_idx", []))
     idx_issue_codes = report.get("idx_issue_codes")
@@ -356,16 +369,27 @@ def print_summary(report: dict[str, Any]) -> None:
 
 
 def main() -> int:
+    from storage_security import storage_security_exit_code
+
+    rc = storage_security_exit_code()
+    if rc:
+        return rc
+
     parser = argparse.ArgumentParser(description="Validate the translated Persian dataset.")
     parser.add_argument("--file", type=str,
                         default=str(config.PERSIAN_DATASET_PATH))
     parser.add_argument("--review-out", type=str,
                         default=str(config.DATA_DIR / "translation_review.jsonl"))
+    parser.add_argument("--acknowledge-license", action="store_true",
+                        help=override_flag_help())
     args = parser.parse_args()
     report = validate_translation_file(args.file)
     print_summary(report)
     if report["exists"] and report["issues_total"]:
-        reviewed = write_review_file(args.file, args.review_out, report)
+        reviewed = write_review_file(
+            args.file, args.review_out, report,
+            acknowledge_license=args.acknowledge_license,
+        )
         print(f"[qa] wrote {reviewed} record(s) needing manual review -> {args.review_out}")
     # Missing file or structural issues are exit-worthy; heuristic warnings are not.
     has_structural = any(

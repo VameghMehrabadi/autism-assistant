@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import streamlit as st
 
+from data_validation import DataValidationError
 from ui_lib.caching import get_labeler, get_samples
 from ui_lib.display import render_label_result
 from ui_lib.widgets import (
+    MOCK_DATA_LABEL,
     render_dataset_selector,
     render_fact_lang_selector,
     render_limit_input,
@@ -13,6 +15,14 @@ from ui_lib.widgets import (
 )
 
 st.set_page_config(page_title="Quick Label", layout="wide")
+
+from ui_lib.auth import require_auth  # noqa: E402  (gate before any content)
+from ui_lib.widgets import (  # noqa: E402  (mode caption first)
+    render_storage_security_banner,
+)
+
+require_auth()
+render_storage_security_banner(compact=True)
 st.title("Quick Label")
 st.caption("Score one utterance against autism fact categories.")
 st.caption(
@@ -43,6 +53,11 @@ if use_samples:
     except FileNotFoundError as e:
         st.warning(str(e))
         samples = []
+    except DataValidationError as e:
+        # Issue #25: mock datasets are refused by the loader — show the
+        # unmistakable mock label instead of a generic failure.
+        st.error(f"{MOCK_DATA_LABEL}\n\n{e}")
+        samples = []
     except Exception as e:
         st.error(f"Dataset load failed: {e}")
         samples = []
@@ -52,6 +67,10 @@ if use_samples:
             f"#{s.idx}: {s.text[:100].replace(chr(10), ' ')}…" for s in samples
         ]
         choice = st.selectbox("Sample", options)
+        st.caption(
+            "The list shows truncated previews; picking a sample "
+            "deliberately loads its full text into the editor below."
+        )
         idx = options.index(choice)
         sample_text = samples[idx].text
         sample_meta = samples[idx].meta

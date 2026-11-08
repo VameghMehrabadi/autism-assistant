@@ -78,8 +78,205 @@ Created under `data/gold/` (kept **separate** from development data and model ou
 
 ## 8. Remaining Scientific Limitations
 1. **No human-labeled calibration data exists** — all thresholds remain uncalibrated geometric heuristics; the gold set must be labeled (2 rounds + adjudication) before any operating point is meaningful.
-2. **Historical runs lack alignment metadata** — equivalence was verified empirically via content fingerprints, but `text_window`/`dataset_fingerprint` are recorded only for future runs (absence reported honestly, never backfilled).
+2. **Historical runs lack execution-time alignment metadata** — addressed by Issue #9: retroactive, artifact-derived evidence is recorded in a separate `alignment_legacy.json` per run (provenance `retroactive`, classification `legacy-partial`); it is explicitly NOT execution-time metadata and never backfilled into `run_meta.json`. See section 9.
 3. **Different text windows across models** (128 vs 512) are part of each model's configuration; a strict "identical truncation" study would require re-running all models at one window.
 4. **Exact-match input grouping only** for leakage prevention (Phase-2 limitation, unchanged).
 5. MentalChat16K contains almost no autism-specific terminology (Phase-1 finding) — comparison results measure category overlap with a general counseling corpus, not autism-specific performance.
 6. "GPT-3.5 synthetic" provenance remains unverified locally (no network).
+
+## 9. Historical Run Alignment Metadata (Issue #9)
+
+### The alignment metadata contract for new runs
+
+Every run created by `main.run_pipeline` records, at execution time, in
+`run_meta.json`: `threshold`, `preprocess_version`, `text_window`
+(effective per-model window), `dataset_fingerprint` (sha256 of the labeled
+input texts **in row order**, first 16 hex chars — `main.py`), and
+`dataset_total` (pre-validation total), alongside the model/prefix/
+fact-lang/labeler-version fields historical runs already carried. The
+canonical algorithms live in **one place** (`alignment.py`):
+`ordered_input_fingerprint` (the `dataset_fingerprint` algorithm) and
+`labeled_text_fingerprint` (the sorted-text algorithm
+`--verify-alignment` has always used). There is no second implementation.
+
+### Execution-time vs retroactive metadata
+
+| Kind | Where | Classification |
+|---|---|---|
+| Recorded at execution time | `run_meta.json` (written by `run_pipeline`) | `modern` — verifiable |
+| Reconstructed from persisted artifacts (Issue #9) | `alignment_legacy.json` (separate file, `provenance: "retroactive"`) | `legacy-partial` — **never** reported as execution-time verified |
+| Nothing available | — | `legacy` |
+
+The retroactive artifact contains: `labeled_csv_sha256` (artifact
+identity), `labeled_text_fingerprint` (sorted-text canonical hash),
+`ordered_input_fingerprint_derived` (row-order hash **derived from
+labeled.csv** — clearly named as derived, because a hash of the labeled
+artifact cannot by itself prove dataset-level provenance such as
+pre-filtering records or `dataset_total`), `record_idx_fingerprint`,
+`record_count`, and the execution-time fields the historical run did record
+(`threshold` from its gap report; model/prefix/fact-lang/labeler-version
+from its `run_meta.json` — with their source noted). Fields that cannot be
+proven are listed under `missing` with reasons: `dataset_fingerprint_
+execution_time`, `text_window`, `preprocess_version`, `dataset_total`.
+
+### How historical (legacy) runs are identified
+
+`python compare_runs.py --verify-alignment` classifies every run:
+`modern` / `legacy-partial` / `legacy` / `MISSING_ARTIFACTS`, with
+`alignment_summary` counts. Classification never raises on malformed or
+non-object `run_meta.json` / `gap_analysis.json` (the error is reported in
+the entry as `run_meta_error` / `gap_report_error`, type name only — no
+absolute paths). `all_records_aligned` continues to be computed from the
+labeled record-ID sets, so cross-run input equivalence remains auditable
+for legacy runs; a missing threshold is reported as `null` with
+`threshold_match` unset — never silently treated as matching.
+
+### What the evidence cannot establish
+
+A labeled.csv hash proves the identity of that artifact. It does not prove
+the original dataset-level provenance of a historical run (pre-validation
+records, ordering at load time, preprocessing version, effective text
+window). Those fields remain `missing` in the retroactive artifact with
+explicit reasons.
+
+### Rerun procedure for fully verifiable results
+
+```bash
+# 1. retroactive artifacts for historical runs (idempotent; sources-fingerprinted)
+python compare_runs.py --migrate-legacy-alignment
+# 2. classification + cross-run record checks
+python compare_runs.py --verify-alignment
+# 3. fully verifiable re-run — into a NEW directory, preserving history:
+python main.py --limit 0 --model minilm --fact-lang fa --dataset en     --out outputs/verified_1_fa_en_minilm
+#    then confirm the metadata contract:
+python -c "from alignment import classify_alignment; print(classify_alignment('outputs/verified_1_fa_en_minilm'))"
+```
+
+**Warning:** `python compare_runs.py --only <n>` re-executes a run AND
+overwrites `outputs/comparison/<run-id>` — archive the historical
+directory first if it must be kept (`--skip-existing` skips existing runs
+instead of rerunning them).
+
+**`all_records_aligned` semantics:** it means ONLY that the labeled
+record-ID sets match the reference run. It is NOT dataset-level provenance
+and NOT execution-time verification — the per-run classifications and
+`all_runs_modern` carry that distinction (`legacy-partial` and `legacy`
+runs never contribute to a modern-verified claim). Migration invalidation:
+each retroactive artifact records sha256 fingerprints of ALL its sources
+(`labeled.csv`, `run_meta.json`, `gap_analysis.json`; missing = `absent`)
+— a change to any source regenerates the artifact on the next migration;
+the artifact's own timestamp is excluded from the comparison.
+
+Migrated runs remain classified `legacy-partial` forever — they are never
+converted to `verified`. The comparison report
+(`comparison_report.md`, section "Run alignment") marks every non-modern
+run with its reason and the exact rerun command
+(`python compare_runs.py --only <n> --limit 0`). Runs 1–3 have been
+migrated (retroactive artifacts written; `labeled.csv` and `run_meta.json`
+bytes untouched — sha256-verified) and verify as `legacy-partial` with
+`all_records_aligned: true`.
+## 10. Human-Labeled Gold Evaluation Set & Encoder-Specific Calibration (Issue #8)
+
+### Gold dataset design (implemented)
+
+- Selection: `python gold_split.py --size 300` carves **300 records**
+  (within Issue #8's 200–500 range) from the 16,005-record EN export using
+  the existing Phase-2 grouping machinery — records are selected and
+  partitioned **whole-group** (297 groups), so related records can never
+  leak across partitions. Seed (42), algorithm, dataset sha256
+  (`a558909c0c62d05d…`), per-record partitions, leakage verification and
+  **group-key fingerprints** (sha256-utf8-hex-v1 of the full group key —
+  the key itself is conversation-derived text and is never persisted) are
+  recorded in `data/gold/gold_split_manifest.json`.
+- Partitions: `gold_calibration` (105 records) for threshold selection,
+  `gold_evaluation` (195 records) held out for final metrics. Verified
+  disjoint at record and group level (`leak_free: true`).
+- Worklist: `data/gold/gold_annotation_template.jsonl` — 300 pending
+  records with stable `gold_id`, `source_idx`, the patient text, empty
+  multi-label `labels`, `status: "pending"`, null `labeler_id`, and full
+  provenance (record hash, group key, dataset sha256, seed). **Contains
+  raw conversation text — gitignored by design, never committed.**
+- **Development-split limitation (honest):** no historical Phase-2
+  dev/eval manifest exists for this dataset (the labeling runs passed no
+  `split` argument), so gold-vs-development overlap cannot be computed
+  retroactively. The prior full-corpus encoder similarity computation was
+  **unsupervised labeling with a fixed 0.35 threshold** — not threshold
+  fitting and not supervised training — and no human-derived threshold
+  calibration has occurred yet. Safeguard: any future training or
+  development partition must exclude the gold calibration and evaluation
+  groups via the same canonical group-key fingerprint algorithm
+  (sha256-utf8-hex-v1).
+
+### Human annotation requirements
+
+- Protocol: `data/gold/ANNOTATION_GUIDELINE.md` — operational A–G
+  definitions (identical to `facts.py::CATEGORIES`), inclusion/exclusion
+  criteria, multi-label rules (`UNSURE` stands alone), the empty-list
+  "no applicable category" annotation, pseudonymous `labeler_id`, and the
+  `origin: "human"` governance rule.
+- Governance: `gold_eval.py` accepts **only** `origin == "human"`
+  (model-generated labels are structurally rejected and counted); records
+  with `status != "annotated"` are worklist entries, never gold labels;
+  empty-list labels are deliberate "no category applies" annotations, not
+  missing data; duplicates are rejected explicitly; `partition` and
+  `provenance` are validated and preserved.
+- **Zero human labels exist today.** The acceptance criterion "gold set
+  with genuine human annotations" remains **blocked on human annotators**;
+  nothing in this repository marks the template as annotated.
+
+### Calibration methodology (implemented, pending human data)
+
+- Per encoder: thresholds are selected by deterministic grid search
+  (0.05–0.975, step 0.025) maximizing **macro F1 over categories with
+  support > 0** on the `gold_calibration` partition only; ties resolve to
+  the lower threshold. Per-category thresholds require ≥ 10 positives and
+  ≥ 10 negatives — otherwise the category falls back to the global
+  threshold with an explicit `insufficient_support` status.
+- Sufficiency rule: fewer than 50 human-labeled calibration records →
+  `calibrated: false` with the exact shortfall; model-origin records
+  abort calibration outright.
+- **Current status: `minilm`, `bge-m3`, `e5-large` are all
+  UNCALIBRATED** — no human annotations exist, so the shared 0.35 default
+  is the documented but **uncalibrated** default for every encoder. No
+  threshold in this repository has been calibrated; none will be reported
+  as calibrated until a validated human-labeled calibration partition
+  exists (`data/gold/calibration.json`, written only by the calibration
+  workflow).
+
+### Evaluation metrics & uncertainty (implemented, pending human data)
+
+- `evaluation_metrics.py`: per-category precision/recall/F1/support and
+  confusion counts, micro P/R/F1, macro F1 (full universe — zero-support
+  categories count as 0, reported with support), and a supported-categories
+  macro used only as the calibration criterion. Uncertainty: **group-aware
+  bootstrap** percentile intervals for macro F1 (groups resampled whole,
+  1000 rounds, seeded) with an explicit refusal below 50 records / 30
+  groups — a misleading interval is worse than none.
+- Calibration vs held-out: calibration uses ONLY the `gold_calibration`
+  partition; `gold_evaluation` metrics are computed separately (test-locked
+  — held-out records cannot shift calibration thresholds). Until human
+  labels exist, **all real evaluation metrics are pending**; the functions
+  are tested against hand-computed fixtures only.
+
+### Why cosine similarity is not probability
+
+Cosine similarity is a geometric angle measure in [-1, 1] with no
+probabilistic interpretation; a thresholded similarity is a decision rule,
+not a confidence estimate, and threshold behavior differs per encoder
+(e.g. e5-large concentrates scores near 0.80). Cross-encoder threshold
+comparisons are meaningless without encoder-specific calibration on human
+labels — which does not exist yet.
+
+### Claims status
+
+| Claim | Status |
+|---|---|
+| Gold selection (300 records, group-safe, reproducible) | Implemented + verified |
+| Annotation protocol + unfilled template | Implemented |
+| Gold validation (multi-label, origin enforcement, duplicates) | Implemented + tested |
+| Calibration workflow (per encoder, sufficiency rules) | Implemented + tested on synthetic fixtures |
+| Evaluation metrics + group-bootstrap uncertainty | Implemented + tested on fixtures |
+| Genuine human-labeled calibration | **PENDING — blocked on human annotators** |
+| Encoder-specific calibrated thresholds | **PENDING** |
+| Held-out evaluation metrics on human labels | **PENDING** |
+| Any accuracy/quality claim | **FORBIDDEN until human labels are committed** |

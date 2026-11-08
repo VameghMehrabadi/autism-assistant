@@ -264,6 +264,57 @@ def record_group_key(row: dict[str, Any]) -> str:
     return "full:" + record_fingerprint(row)
 
 
+MOCK_CONTENT_MARKERS: tuple[str, ...] = ("[MOCK-FA]", "[MOCK-EN]")
+MOCK_MODEL_IDS: frozenset[str] = frozenset({"mock-echo", "mock", "mock-budget"})
+
+
+def detect_dataset_kind(rows: Sequence[Any], path: str | Path | None = None) -> str:
+    """Classify a dataset as ``"mock"``, ``"fixture"``, or ``"real"``.
+
+    Detection uses provenance signals (mock content markers or mock model
+    ids), not filenames alone. Mock datasets are refused by the loaders
+    unless explicitly allowed so they can never masquerade as production
+    translation output.
+    """
+    for row in list(rows)[:20]:
+        if not isinstance(row, dict):
+            continue
+        model_id = str(row.get("model") or "")
+        if model_id in MOCK_MODEL_IDS:
+            return "mock"
+        for value in row.values():
+            text = str(value or "")
+            if any(marker in text for marker in MOCK_CONTENT_MARKERS):
+                return "mock"
+    if path is not None:
+        normalized = str(Path(path)).replace("\\", "/").lower()
+        if "/tests/fixtures/" in normalized:
+            return "fixture"
+    return "real"
+
+
+def detect_dataset_kind_file(path: str | Path, max_lines: int = 20) -> str:
+    """Classify a dataset file without loading it fully (Issue #25 UI)."""
+    p = Path(path)
+    if not p.exists():
+        return "missing"
+    records: list[Any] = []
+    with p.open("r", encoding="utf-8") as handle:
+        for i, line in enumerate(handle):
+            if i >= max_lines:
+                break
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                record = json.loads(stripped)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(record, dict):
+                records.append(record)
+    return detect_dataset_kind(records, path=p)
+
+
 def find_duplicate_groups(fingerprints: Sequence[str]) -> list[list[int]]:
     """Group positions that share the same fingerprint (groups of ≥2)."""
     by_hash: dict[str, list[int]] = {}

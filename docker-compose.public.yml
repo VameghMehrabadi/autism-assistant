@@ -1,0 +1,24 @@
+# Issue #12 — EXPLICIT PUBLIC EXPOSURE override. Never used by default.
+#
+# Public exposure requires ALL of the following, deliberately:
+#   1. this override file (binds the host port on 0.0.0.0),
+#   2. BIND_PUBLIC=1 (switches the app into public mode), and
+#   3. APP_AUTH_PASSWORD (>= 8 chars) — compose REFUSES to start without it
+#      (the ${VAR:?...} interpolation below fails closed at `up`/`config`).
+#
+#   BIND_PUBLIC=1 APP_AUTH_PASSWORD='choose-a-long-passphrase' \
+#     docker compose -f docker-compose.yml -f docker-compose.public.yml up --build
+#
+# The app additionally validates these at runtime and refuses to serve
+# content in public mode without a credential (defense in depth).
+# XSRF protection is NOT authentication; this credential is.
+# For a clinical/remote deployment prefer an authenticated, TLS-terminating
+# reverse proxy in front (see README — "Public mode"), and keep this port
+# bound to loopback on the proxy host.
+services:
+  ui:
+    ports: !override
+      - "0.0.0.0:${UI_HOST_PORT:-8501}:8501"
+    environment:
+      BIND_PUBLIC: "1"
+      APP_AUTH_PASSWORD: ${APP_AUTH_PASSWORD:?BIND_PUBLIC=1 requires APP_AUTH_PASSWORD (min 8 chars) - refusing unauthenticated public exposure}
