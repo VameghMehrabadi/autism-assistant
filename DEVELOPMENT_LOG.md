@@ -69,6 +69,12 @@ Chronological record of autonomous development phases. Detailed evidence lives i
 - UI: research-use warnings on Home, Run Pipeline, Results; Quick Label/Compare captions.
 
 ## Phase 5 (release readiness) — GUI accuracy, Docker, documentation (this commit)
+
+> **Correction (issue #1):** the Phase-5 report's release-readiness status was
+> relabeled from `COMPLETE` to evidence-based statuses — the Docker image build
+> and runtime smoke were `IMPLEMENTED — NOT EXECUTED`. The authoritative v1
+> checklist now lives in `reports/PHASE_5_RELEASE_READINESS.md` §3; the
+> Phase-5 execution record is preserved in its §6.
 - Translate/Export page now uses the safe export path (`write_export`): COMPLETE/INCOMPLETE status shown in-UI, sidecar metadata displayed, translation-status panel added; default export is the full dataset.
 - Docker compose: `ZAI_API_KEY` / `ZHIPU_API_KEY` / `ZAI_BASE_URL` forwarded to both services; **fixed pre-existing YAML typo** (`SENTENCE_TRANSFORMERS_HOME=` → `:` in the ui service); compose YAML-validated.
 - Research-use disclaimers added to Quick Label and Compare Models pages.
