@@ -81,6 +81,28 @@ A CUDA build of `torch==2.15.0` from the default PyPI index is drop-in
 compatible for everything else in the stack. Unit tests run fully offline —
 no model downloads and no API keys are required (`pytest`).
 
+### Quick start with the launch scripts (Windows)
+
+The `launch_ui.bat` and `launch_ui.ps1` scripts automate the full setup:
+venv creation, CPU-only PyTorch installation, dependency installation,
+`pip check`, and Streamlit launch. They skip installation on subsequent
+runs when dependencies are already present.
+
+```bat
+launch_ui.bat        (double-click or run from cmd)
+.\launch_ui.ps1      (PowerShell)
+```
+
+**Model cache location:** embedding models and datasets are cached in
+`config.CACHE_DIR` (default: `D:\autism_assistant_cache` if a `D:` drive
+exists, otherwise `<project>\.cache`). Override with the `AUTISM_CACHE_DIR`
+environment variable. The directory is created automatically on first use.
+
+**Common failures:**
+- `pip check` fails → dependency graph is inconsistent; delete `.venv` and re-run the launcher.
+- PyTorch install fails → verify network access to `download.pytorch.org`.
+- Streamlit not found → the venv exists but dependencies are missing; delete `.venv` and re-run.
+
 Engineering reports live in `reports/` (phase audits, architecture,
 roadmap, dependency verification).
 
