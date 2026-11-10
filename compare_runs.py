@@ -28,6 +28,7 @@ import numpy as np
 import pandas as pd
 
 import config
+import alignment
 from facts import CATEGORY_KEYS
 from gap_analysis import (
     CONFIDENCE_NOT_ACCURACY_EN,
@@ -78,6 +79,15 @@ def parse_args() -> argparse.Namespace:
         help="Read-only verification that persisted runs used equivalent "
              "records, thresholds, and configurations; prints the alignment "
              "report and exits",
+    )
+    p.add_argument(
+        "--migrate-legacy-alignment",
+        action="store_true",
+        help="Issue #9: write alignment_legacy.json (retroactive, "
+             "artifact-derived evidence) for historical runs that lack "
+             "execution-time alignment metadata. Idempotent; never touches "
+             "labeled.csv or run_meta.json; migrated runs remain classified "
+             "'legacy-partial', never execution-time verified",
     )
     p.add_argument(
         "--allow-mock",
@@ -236,6 +246,55 @@ def render_comparison_markdown(
             f"{s['model_key']} | {s['confident_rate']:.1%} | {s['mean_top_score']} | "
             f"{' → '.join(s['ranking_weak_to_strong'])} |"
         )
+
+    # Issue #9 — per-run alignment classification. Legacy (historical) runs
+    # are never presented as execution-time verified; each non-modern run
+    # carries its reason and an actionable rerun instruction.
+    lines += [
+        "",
+        "## Run alignment",
+        "",
+    ]
+    for i, s in enumerate(summaries, start=1):
+        info = s.get("alignment")
+        if not info:
+            lines.append(
+                f"- `{s['id']}`: alignment status not recorded in this "
+                "report."
+            )
+            continue
+        classification = info.get("classification", "unknown")
+        if classification == "modern":
+            lines.append(
+                f"- `{s['id']}`: **modern** — execution-time alignment "
+                "metadata present (dataset fingerprint, text window, "
+                "preprocessing version, threshold, dataset total)."
+            )
+        else:
+            reason = info.get("reason") or "no alignment metadata available"
+            model = s.get("model_key") or "minilm"
+            fact_lang = s.get("fact_lang") or "fa"
+            dataset = s.get("dataset") or "en"
+            out_dir = f"outputs/verified_{s['id']}"
+            lines.append(
+                f"- `{s['id']}`: **{classification}** — {reason}. This run "
+                "is NOT execution-time verified. Rerun with the pipeline "
+                "CLI (preserves history — never overwrites the historical "
+                "directory): `python main.py --limit 0 --model "
+                f"{model} --fact-lang {fact_lang} --dataset {dataset} "
+                f"--out {out_dir}`, then check the metadata: `python -c "
+                f"\"from alignment import classify_alignment; "
+                f"print(classify_alignment('{out_dir}'))\"`."
+            )
+    lines += [
+        "",
+        "Note: `python compare_runs.py --only <n>` re-executes a run AND "
+        "overwrites `outputs/comparison/<run-id>` — archive the historical "
+        "directory first if it must be kept (`--skip-existing` skips "
+        "existing runs instead of rerunning them). `all_records_aligned` "
+        "means the labeled record-ID sets match the reference run — it is "
+        "NOT dataset-level provenance and NOT execution-time verification.",
+    ]
 
     # Issue #15 — the fixed interpretation sentence sits directly next to the
     # Confident% column, plus an explicit no-best-model rule.
@@ -553,13 +612,20 @@ def verify_alignment(run_ids: list[str] | None = None) -> dict:
 
     Returns a content-free verification report. Historical runs predating the
     alignment metadata report ``null`` for the new fields — absence is
-    reported honestly, never backfilled.
+    reported honestly, never backfilled. ``all_records_aligned`` means ONLY
+    that the labeled record-ID sets match the reference run — not
+    dataset-level provenance and not execution-time verification (see
+    ``all_records_aligned_semantics`` and the per-run alignment
+    classifications; ``all_runs_modern`` is the strict modern-verified flag).
     """
     import pandas as pd
 
     runs = run_ids or [r["id"] for r in config.COMPARISON_RUNS]
     base = config.COMPARISON_DIR
-    report: dict[str, Any] = {"runs": [], "all_records_aligned": None}
+    report: dict[str, Any] = {
+        "runs": [],
+        "all_records_aligned": None,
+    }
     ref_idx: frozenset | None = None
     ref_text_hash: str | None = None
     ref_threshold = None
@@ -575,52 +641,107 @@ def verify_alignment(run_ids: list[str] | None = None) -> dict:
             continue
         df = pd.read_csv(labeled_path)
         idx_set = frozenset(pd.to_numeric(df["idx"], errors="coerce").dropna().astype(int))
-        text_hash = hashlib.sha256(
-            "\u241f".join(sorted(df["text"].astype(str))).encode("utf-8")
-        ).hexdigest()[:16]
-        gap = json.loads(gap_path.read_text(encoding="utf-8"))
-        meta = (
-            json.loads(meta_path.read_text(encoding="utf-8"))
-            if meta_path.exists()
-            else {}
-        )
+        # Issue #9: one canonical fingerprint implementation (alignment.py)
+        text_hash = alignment.labeled_text_fingerprint(df)
+        gap, gap_error = alignment.read_json(gap_path)
+        if gap is not None and not isinstance(gap, dict):
+            gap, gap_error = None, "gap_analysis.json is not a JSON object"
+        meta, meta_error = alignment.read_json(meta_path)
+        if meta is not None and not isinstance(meta, dict):
+            meta, meta_error = None, "run_meta.json is not a JSON object"
+        entry["alignment"] = alignment.classify_alignment(run_dir, meta)
+        gap_threshold = gap.get("threshold") if isinstance(gap, dict) else None
         entry.update(
             {
                 "status": "ok",
                 "n_records": len(df),
                 "records_match_reference": None,  # set below
                 "text_fingerprint": text_hash,
-                "threshold": gap.get("threshold"),
-                "model": meta.get("model_key") or run_id,
-                "fact_lang": meta.get("fact_lang"),
-                "labeler_version": meta.get("labeler_version"),
-                "text_window": meta.get("text_window", "pre-alignment-metadata"),
-                "embed_prefix": meta.get("prefix"),
-                "dataset_fingerprint": meta.get("dataset_fingerprint"),
+                "threshold": gap_threshold,
+                "model": (meta or {}).get("model_key") or run_id,
+                "fact_lang": (meta or {}).get("fact_lang"),
+                "labeler_version": (meta or {}).get("labeler_version"),
+                "text_window": (meta or {}).get(
+                    "text_window", "pre-alignment-metadata"
+                ),
+                "embed_prefix": (meta or {}).get("prefix"),
+                "dataset_fingerprint": (meta or {}).get("dataset_fingerprint"),
             }
         )
-        counts_sum = sum(
-            gap["per_category"][c]["count"] for c in gap["per_category"]
-        )
-        entry["category_counts_sum"] = counts_sum
-        entry["missing_records_vs_total"] = (
-            (meta.get("dataset_total") or counts_sum) - counts_sum
-        )
+        if gap_error:
+            entry["gap_report_error"] = gap_error
+        if isinstance(meta, dict) and meta_error:
+            entry["run_meta_error"] = meta_error
+        if isinstance(gap, dict):
+            counts_sum = sum(
+                gap["per_category"][c]["count"] for c in gap["per_category"]
+            )
+            entry["category_counts_sum"] = counts_sum
+            entry["missing_records_vs_total"] = (
+                ((meta or {}).get("dataset_total") or counts_sum) - counts_sum
+            )
+        else:
+            entry["category_counts_sum"] = None
+            entry["missing_records_vs_total"] = None
+        # Issue #9: surface the retroactive artifact's derived fingerprint
+        # under an explicitly derived name — never as execution-time metadata.
+        # Strictly validated only; malformed artifacts contribute nothing.
+        artifact = alignment.read_json(
+            run_dir / alignment.LEGACY_ARTIFACT_NAME
+        )[0]
+        if (
+            isinstance(artifact, dict)
+            and isinstance(artifact.get("evidence"), dict)
+        ):
+            entry["dataset_fingerprint_derived"] = artifact["evidence"].get(
+                "ordered_input_fingerprint_derived"
+            )
         if ref_idx is None:
-            ref_idx, ref_text_hash, ref_threshold = idx_set, text_hash, gap.get("threshold")
+            ref_idx, ref_text_hash, ref_threshold = (
+                idx_set, text_hash, gap_threshold
+            )
             entry["records_match_reference"] = True
         else:
             entry["records_match_reference"] = idx_set == ref_idx
             entry["text_fingerprint_match"] = text_hash == ref_text_hash
-            entry["threshold_match"] = gap.get("threshold") == ref_threshold
+            entry["threshold_match"] = (
+                gap_threshold == ref_threshold
+                if gap_threshold is not None and ref_threshold is not None
+                else None
+            )
         report["runs"].append(entry)
     record_checks = [
         r.get("records_match_reference") for r in report["runs"] if r.get("status") == "ok"
     ]
     report["all_records_aligned"] = all(record_checks) if record_checks else None
+    # Issue #9 review fix — make the semantics unambiguous: this flag says
+    # ONLY that the labeled record-ID sets correspond. It is NOT proof of
+    # dataset-level provenance and NOT execution-time verification; legacy
+    # and legacy-partial runs never contribute to a modern-verified claim.
+    report["all_records_aligned_semantics"] = (
+        "labeled record-ID sets match the reference run — NOT dataset-level "
+        "provenance and NOT execution-time verification; see per-run "
+        "alignment classifications"
+    )
+    ok_entries = [
+        r for r in report["runs"] if r.get("status") == "ok"
+    ]
+    report["all_runs_modern"] = bool(ok_entries) and all(
+        (r.get("alignment") or {}).get("classification") == "modern"
+        for r in ok_entries
+    )
     report["n_runs_missing_artifacts"] = sum(
         1 for r in report["runs"] if r.get("status") == "MISSING_ARTIFACTS"
     )
+    # Issue #9: per-classification counts — legacy runs are never
+    # counted as verified.
+    summary: dict[str, int] = {}
+    for r in report["runs"]:
+        classification = (r.get("alignment") or {}).get(
+            "classification", r.get("status", "unavailable")
+        )
+        summary[classification] = summary.get(classification, 0) + 1
+    report["alignment_summary"] = summary
     return report
 
 
@@ -637,6 +758,29 @@ def main() -> int:
         print(json.dumps(report, ensure_ascii=False, indent=2))
         if report["all_records_aligned"] is False:
             return 4
+        return 0
+
+    if args.migrate_legacy_alignment:
+        run_ids = (
+            [r["id"] for r in selected_runs(args.only)]
+            if args.only
+            else [r["id"] for r in config.COMPARISON_RUNS]
+        )
+        run_dirs = [
+            config.COMPARISON_DIR / run_id
+            for run_id in run_ids
+            if (config.COMPARISON_DIR / run_id / "labeled.csv").exists()
+        ]
+        summary = alignment.migrate_legacy_alignment(run_dirs)
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
+        if summary["failed"]:
+            return 4
+        print(
+            "[compare] Retroactive artifacts written. These runs remain "
+            "classified 'legacy-partial' — they are NOT execution-time "
+            "verified. For fully verifiable results rerun with current "
+            "metadata: python compare_runs.py --limit 0"
+        )
         return 0
 
     limit = args.limit if args.limit is not None else config.SAMPLE_LIMIT
@@ -689,6 +833,10 @@ def main() -> int:
                 },
             )
         summaries.append(summarize_run(report, run_cfg))
+        # Issue #9 — attach the run's alignment classification so the
+        # comparison report can distinguish modern runs from historical
+        # (legacy) ones. Metadata-only; never raises on malformed meta.
+        summaries[-1]["alignment"] = alignment.classify_alignment(run_dir)
     augment_score_stats(summaries)
 
     table = build_comparison_table(summaries)

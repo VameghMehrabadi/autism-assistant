@@ -97,6 +97,10 @@ def test_run_meta_records_threshold_window_fingerprint(tmp_path, offline_labeler
     assert meta["text_window"] is None  # minilm native default (128) → None = model default
     assert len(meta["dataset_fingerprint"]) == 16
     assert meta["dataset_total"] == 5  # fixture rows, before the limit
+    # Issue #9 — the execution-time alignment contract is complete:
+    assert set(
+        __import__("alignment").MODERN_REQUIRED_FIELDS
+    ) <= set(meta)
 
 
 # --------------------------------------------------------------------------
