@@ -18,9 +18,8 @@
 | 4 (validity) | Evaluation methodology: score-scale honesty, alignment verification (`--verify-alignment`), gold-set governance (`origin: human`) | ✅ COMPLETE (implemented + tested) |
 | 5 | Gap analysis v2 (distribution, confidence, uncertainty, margin, prototype evidence, score-scale stats) | ✅ COMPLETE |
 | 7 | Streamlit GUI | ✅ COMPLETE + browser-verified; research-use disclaimers on all analysis pages; honest export/translation status panels |
-| 8 | Integration, testing, optimization | ✅ 246 tests passing; offline CI guards; embedding cache; fresh-venv install verified |
-| 9 | Production readiness & release docs | ⚠️ **IMPLEMENTED — NOT EXECUTED (partially)**: documentation complete incl. `PRIVACY_AND_SECURITY.md`; compose YAML-validated; Docker image build attempted but **not completed** (base-image pull stalled) and no runtime smoke — tracked as release-checklist items D-1/D-2 in `reports/PHASE_5_RELEASE_READINESS.md` §3 |
-
+| 8 | Integration, testing, optimization | ✅ 248 tests passing; offline CI guards; embedding cache; fresh-venv install verified |
+| 9 | Production readiness & release docs | ⚠ **IMPLEMENTED — NOT EXECUTED (Docker build + runtime smoke)**: documentation complete incl. `PRIVACY_AND_SECURITY.md`; compose YAML-validated; Docker build attempted but not completed (base-image pull stalled) and no runtime smoke — tracked as release-checklist items D-1/D-2 in `reports/PHASE_5_RELEASE_READINESS.md` §3 |
 ## 2. Implemented Features (all verified where marked)
 
 - **Data layer** (`data_loader.py`, `data_validation.py`): EN MentalChat16K (Hugging Face) + Persian/any JSONL/CSV/TSV/JSON; encoding detection (BOM/UTF-8/cp1256/UTF-16); schema validation; missing-value normalization; content-fingerprint dedup; script-based language ID; reproducible seeded sampling; dev/eval split manifest with hard leakage guard; identifiers + original records preserved.
