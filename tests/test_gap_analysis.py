@@ -93,7 +93,7 @@ def test_gap_report_old_format_has_no_phase3_signals():
     assert report["n_uncertain"] is None
     assert report["uncertain_rate"] is None
     assert report["margin_stats"] is None
-    assert all(report["per_category"][c]["matched_count"] == 0 for c in CATEGORY_KEYS)
+    assert all(report["per_category"][c]["matched_count"] is None for c in CATEGORY_KEYS)
 
 
 def test_gap_report_markdown_renders_uncertainty_section():

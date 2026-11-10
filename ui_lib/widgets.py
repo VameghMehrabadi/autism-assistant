@@ -6,7 +6,35 @@ from pathlib import Path
 import streamlit as st
 
 import config
+from data_validation import detect_dataset_kind_file
 from facts import category_titles_bilingual
+
+# Issue #25: provenance labels so mock/fixture data can never be mistaken
+# for a real translated dataset.
+MOCK_DATA_LABEL = "MOCK DATA — NOT REAL TRANSLATION"
+FIXTURE_DATA_LABEL = "TEST FIXTURE — NOT REAL TRANSLATION"
+NOT_TRANSLATED_FA = "ترجمه‌ی واقعی هنوز اجرا نشده است"
+NOT_TRANSLATED_EN = "No real translation has been executed yet — status: INCOMPLETE."
+
+
+def dataset_provenance(path: str | Path | None) -> tuple[str, str]:
+    """Return ``(kind, user-facing label)`` for a dataset file.
+
+    ``kind`` is one of ``missing | mock | fixture | real``. The label is
+    intended for direct display in the UI so the data source is identifiable
+    without inspecting logs or source code.
+    """
+    if not path:
+        return "missing", NOT_TRANSLATED_FA
+    p = Path(path)
+    if not p.exists():
+        return "missing", NOT_TRANSLATED_FA
+    kind = detect_dataset_kind_file(p)
+    if kind == "mock":
+        return "mock", MOCK_DATA_LABEL
+    if kind == "fixture":
+        return "fixture", FIXTURE_DATA_LABEL
+    return "real", "Real dataset"
 
 
 MODEL_LABELS = {
@@ -53,7 +81,7 @@ def render_dataset_selector(key_prefix: str = "ds") -> tuple[str, str | None]:
         format_func={
             "en": "English MentalChat16K (Hugging Face)",
             "fa": "Persian JSONL (data/mentalchat16k_fa.jsonl)",
-            "sample": "Tiny Persian sample (tests/fixtures)",
+            "sample": "Tiny Persian sample (tests/fixtures) — TEST FIXTURE, 5 records, not real translation output",
             "custom": "Custom file path",
         }.__getitem__,
         key=f"{key_prefix}_source",

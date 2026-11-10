@@ -119,8 +119,10 @@ def build_report(df: pd.DataFrame, scores: np.ndarray,
                 "median": round(float(margins.median()), 4),
                 "min": round(float(margins.min()), 4),
             }
-    matched_counts: dict[str, int] = {c: 0 for c in cat_keys}
+    # Issue #19: matched_count is None (not zero) when the source CSV lacks
+    # matched_fact_ids — a missing column is not a genuine zero-match result.
     if "matched_fact_ids" in df.columns:
+        matched_counts: dict[str, int] = {c: 0 for c in cat_keys}
         for raw in df["matched_fact_ids"]:
             if not isinstance(raw, str) or not raw.strip():
                 continue  # NaN / empty cells
@@ -128,8 +130,11 @@ def build_report(df: pd.DataFrame, scores: np.ndarray,
                 fact_id = part.strip().split(":")[0]  # entries look like "12:fa"
                 if fact_id.isdigit() and int(fact_id) in _FACT_CATEGORY:
                     matched_counts[_FACT_CATEGORY[int(fact_id)]] += 1
-    for c in cat_keys:
-        per_cat[c]["matched_count"] = matched_counts[c]
+        for c in cat_keys:
+            per_cat[c]["matched_count"] = matched_counts[c]
+    else:
+        for c in cat_keys:
+            per_cat[c]["matched_count"] = None
 
     # رتبه‌بندی ضعیف→قوی: top-1، سپس پوشش multi-label، سپس شباهت سراسری
     ranking = sorted(

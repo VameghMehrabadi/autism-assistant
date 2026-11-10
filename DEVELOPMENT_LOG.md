@@ -69,6 +69,12 @@ Chronological record of autonomous development phases. Detailed evidence lives i
 - UI: research-use warnings on Home, Run Pipeline, Results; Quick Label/Compare captions.
 
 ## Phase 5 (release readiness) — GUI accuracy, Docker, documentation (this commit)
+
+> **Correction (issue #1):** the Phase-5 report's release-readiness status was
+> relabeled from `COMPLETE` to evidence-based statuses — the Docker image build
+> and runtime smoke were `IMPLEMENTED — NOT EXECUTED`. The authoritative v1
+> checklist now lives in `reports/PHASE_5_RELEASE_READINESS.md` §3; the
+> Phase-5 execution record is preserved in its §6.
 - Translate/Export page now uses the safe export path (`write_export`): COMPLETE/INCOMPLETE status shown in-UI, sidecar metadata displayed, translation-status panel added; default export is the full dataset.
 - Docker compose: `ZAI_API_KEY` / `ZHIPU_API_KEY` / `ZAI_BASE_URL` forwarded to both services; **fixed pre-existing YAML typo** (`SENTENCE_TRANSFORMERS_HOME=` → `:` in the ui service); compose YAML-validated.
 - Research-use disclaimers added to Quick Label and Compare Models pages.
@@ -80,3 +86,12 @@ Chronological record of autonomous development phases. Detailed evidence lives i
 - Comparison report gains a "Raw score distribution per encoder (uncalibrated)" section: n / mean / median / p05 / p95 / share ≥ threshold per run, automatic **threshold-saturation callout** when p05 ≥ threshold (bge-m3 and e5-large flagged on the real runs; MiniLM's threshold still discriminates), and an explicit no-winner rule — no run is ranked or declared best on these percentages (guard test).
 - `top_score_stats` extended with p05/p95; legacy gap reports without stats get them derived from the persisted raw `top_score` column (marked as derived) — dashes when no raw data exists, never silently backfilled.
 - UI snapshot test locks the warning into the Compare Models page; full suite 259 tests green; report regenerated from runs 1–3 (n=16,005 each) with the saturation visible.
+
+## Issue #8 (gold) — Human annotation workflow, group-safe split, calibration & metrics
+- New gold_split.py: carves the Issue #8 annotation split from the real 16,005-record EN export via the existing Phase-2 grouping machinery — whole-group selection and partitioning (seed 42; 300 records, 297 groups; calibration 105 / evaluation 195; manifest-verified leak-free at record and group level). Manifest (content-free, committed) records seed/algorithm/dataset sha256/partitions/verification; the per-record worklist (raw conversation text) is gitignored by design.
+- Annotation protocol: data/gold/ANNOTATION_GUIDELINE.md (operational A–G definitions, inclusion/exclusion, multi-label rules, empty-list no-category annotation, UNSURE alone, pseudonymous labeler identity); gold README updated to the implemented selection.
+- gold_eval.py strengthened: multi-label final_labels (XOR final_label; duplicates rejected; UNSURE alone; empty list = deliberate no-category annotation), status-aware accounting (pending worklist entries are never gold labels; a pending record with a broken schema still invalidates), partition/provenance validation. origin='human' enforcement unchanged.
+- New calibration.py: per-encoder threshold grid search (maximize macro F1 over supported categories; ties to lower threshold; per-category requires >=10 positives/negatives; <50 human calibration records or any model-origin record -> calibrated: false with reasons). 0.35 reported UNCALIBRATED for every encoder — no human annotations exist.
+- New evaluation_metrics.py: per-category P/R/F1/support + confusion, micro/macro F1, supported-categories macro (calibration criterion), group-aware bootstrap percentile CIs with an explicit insufficient-sample refusal. Verified against hand-computed fixtures.
+- Comparison report: "Gold calibration & human evaluation status" section (human-labeled count 0, per-encoder 0.35 uncalibrated status, non-probability/non-diagnostic statements, no clinical-superiority claims). Quick Label caption: thresholds are encoder-specific, require human validation, 0.35 uncalibrated.
+- 23 new tests (271 total green, synthetic only). PHASE_4 §10 documents design/requirements/methodology/status/claims table. ALL real evaluation, calibration, and accuracy claims remain PENDING on human annotators.
