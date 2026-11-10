@@ -607,6 +607,12 @@ def load_samples_fa(
             "for pipeline mechanics testing."
         )
 
+    # Issue #6: mock datasets must never enter the Persian pipeline through
+    # any loader path (defense in depth — the comparison runs also gate).
+    import dataset_guard as _dg
+
+    _dg.assert_real_dataset(fa_path, rows)
+
     samples, report = _build_samples(
         rows,
         fields=config.DATASET_TEXT_FIELDS,
