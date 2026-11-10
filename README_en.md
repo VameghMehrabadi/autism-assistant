@@ -7,6 +7,30 @@ This repository implements the data preparation stage: loading **MentalChat16K**
 semantically labeling samples against 7 autism fact categories (A–G), running **gap analysis**, and comparing
 embedding models for reliability.
 
+## Data licensing & redistribution (Issue #13)
+
+- [ShenLab/MentalChat16K](https://huggingface.co/datasets/ShenLab/MentalChat16K)
+  (reviewed 2026-11-07; the revision this project downloaded is
+  `5f60cd380cfc58f0f12d44892bed41ee3670a70a` — still the current upstream
+  `main` HEAD) **combines two components**: synthetic conversations
+  (GPT-3.5 Turbo) and QA pairs paraphrased from interview transcripts of the
+  PISCES clinical trial (palliative/hospice caregivers).
+- The Hugging Face metadata carries a `license: mit` tag and the official
+  repository ships an MIT LICENSE file — but **no source scopes that license**
+  for the interview-derived component, nor explicitly authorizes translation,
+  derivative creation, or derivative redistribution. The KDD paper's ACM
+  copyright governs the *article*, not the dataset. Status: **UNCLEAR** —
+  full assessment and permission matrix in
+  `reports/PRIVACY_AND_SECURITY.md` (§8).
+- Therefore `data/mentalchat16k_fa.jsonl` and every other derivative of this
+  dataset **must not be committed or publicly redistributed**. The project's
+  export paths **refuse by default** to write these records to a public
+  destination (anywhere outside the project workspace); the
+  `--acknowledge-license` override only records the user's acknowledgment of
+  the unresolved risk — **it is not legal permission**.
+- Citing the original dataset is not equivalent to obtaining redistribution
+  permission. Private/local processing is never restricted.
+
 ## Project status (final release)
 
 | Area | Status |

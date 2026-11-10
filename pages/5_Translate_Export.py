@@ -9,6 +9,12 @@ import streamlit as st
 import config
 from data_loader import load_samples_en
 from export_for_translation import write_export
+from license_guard import (
+    ASSESSMENT_REPORT,
+    LICENSE_STATUS,
+    LicenseGuardError,
+    classify_destination,
+)
 from ui_lib.widgets import (
     NOT_TRANSLATED_EN,
     NOT_TRANSLATED_FA,
@@ -43,6 +49,25 @@ st.caption(
     "its sidecar metadata and must not be treated as the full dataset."
 )
 
+# Issue #13 — centralized licensing guard: paths outside the project
+# workspace are public distribution destinations and need an explicit
+# acknowledgment while the upstream license status is unclear.
+public_destination = classify_destination(out_path) == "public"
+acknowledge_license = False
+if public_destination:
+    st.warning(
+        f"`{out_path}` is **outside the project workspace** — a public "
+        "distribution destination. MentalChat16K mixes synthetic "
+        "conversations with paraphrased clinical-trial interview "
+        "transcripts; the upstream MIT tag does not by itself authorize "
+        f"derivative redistribution (status: `{LICENSE_STATUS}`, see "
+        f"`{ASSESSMENT_REPORT}`)."
+    )
+    acknowledge_license = st.checkbox(
+        "I acknowledge the unresolved licensing risk "
+        "(--acknowledge-license; this is NOT legal permission)"
+    )
+
 if st.button("Export for translation", type="primary"):
     try:
         lim = int(limit)
@@ -54,6 +79,7 @@ if st.button("Export for translation", type="primary"):
             out_path,
             dataset_total=load_report.dataset_total,
             load_report=load_report,
+            acknowledge_license=acknowledge_license,
         )
         if meta["complete"]:
             st.success(
@@ -66,6 +92,8 @@ if st.button("Export for translation", type="primary"):
                 f"{meta['total_source']} source records → `{out_path}`. "
                 "This file must NOT be treated as the full dataset."
             )
+    except LicenseGuardError as e:
+        st.error(str(e))
     except Exception as e:
         st.exception(e)
 
