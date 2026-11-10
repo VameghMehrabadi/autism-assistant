@@ -8,6 +8,7 @@ import pandas as pd
 import streamlit as st
 
 import config
+from run_comparison import build_comparison_table, compare_runs, load_run_snapshot
 from ui_lib.display import (
     detect_phase3_availability,
     list_output_runs,
@@ -23,7 +24,9 @@ st.caption(
     "⚠️ Research use only — labels are similarity heuristics, not diagnoses."
 )
 
-tab_single, tab_compare = st.tabs(["Single runs", "Comparisons"])
+tab_single, tab_compare, tab_longitudinal = st.tabs(
+    ["Single runs", "Comparisons", "Run comparison (longitudinal)"]
+)
 
 with tab_single:
     runs = list_output_runs(config.OUTPUT_DIR)
@@ -92,3 +95,113 @@ with tab_compare:
             st.subheader("Per-run folders")
             for p in sub:
                 st.write(f"- `{p.name}`")
+
+with tab_longitudinal:
+    st.subheader("Longitudinal run comparison")
+    st.caption(
+        "Compares two independent pipeline runs. Descriptive only — "
+        "does not establish causality or clinical significance."
+    )
+
+    # Discover available runs (directories with run_meta.json + labeled.csv)
+    output_base = config.OUTPUT_DIR
+    available_runs = sorted(
+        [d for d in output_base.iterdir()
+         if d.is_dir()
+         and (d / "run_meta.json").exists()
+         and (d / "labeled.csv").exists()],
+        key=lambda p: p.name,
+    ) if output_base.exists() else []
+
+    if len(available_runs) < 2:
+        st.info(
+            "At least 2 run directories (each containing `run_meta.json` "
+            "and `labeled.csv`) are needed for comparison. "
+            "Use **Run Pipeline** to generate runs."
+        )
+    else:
+        run_labels = [d.name for d in available_runs]
+
+        col_a, col_b = st.columns(2)
+        with col_a:
+            run_a_sel = st.selectbox(
+                "Run A (earlier / baseline)", run_labels, index=0,
+                key="cmp_run_a",
+            )
+        with col_b:
+            run_b_sel = st.selectbox(
+                "Run B (later / comparison)", run_labels, index=min(1, len(run_labels) - 1),
+                key="cmp_run_b",
+            )
+
+        if run_a_sel == run_b_sel:
+            st.warning("⚠️ Select two **different** runs for comparison.")
+        else:
+            run_a_dir = output_base / run_a_sel
+            run_b_dir = output_base / run_b_sel
+
+            snap_a = load_run_snapshot(run_a_dir)
+            snap_b = load_run_snapshot(run_b_dir)
+
+            # Show run identification
+            col_a, col_b = st.columns(2)
+            with col_a:
+                st.markdown(f"**Run A:** `{snap_a.run_id}`")
+                ts_a = snap_a.timestamp or "N/A — temporal metadata missing"
+                st.caption(f"Timestamp: {ts_a}")
+            with col_b:
+                st.markdown(f"**Run B:** `{snap_b.run_id}`")
+                ts_b = snap_b.timestamp or "N/A — temporal metadata missing"
+                st.caption(f"Timestamp: {ts_b}")
+
+            if snap_a.timestamp is None or snap_b.timestamp is None:
+                st.warning(
+                    "⚠️ Longitudinal comparison is unavailable because temporal "
+                    "metadata is missing for one or both runs. The category "
+                    "table below still shows the distribution differences, but "
+                    "chronological ordering cannot be established."
+                )
+
+            # Compute comparison
+            result = compare_runs(run_a_dir, run_b_dir)
+
+            # Display warnings
+            for w in result.warnings:
+                st.warning(w)
+
+            # Category comparison table
+            st.subheader("Category distribution")
+            table = build_comparison_table(result)
+            st.dataframe(table, use_container_width=True, hide_index=True)
+
+            # Uncertainty
+            st.subheader("Uncertainty")
+            unc = result.uncertainty
+            if unc and unc.count_a is not None:
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Uncertain (A)", str(unc.count_a))
+                c2.metric("Uncertain (B)", str(unc.count_b))
+                if unc.delta_rate is not None:
+                    c3.metric(
+                        "Δ uncertain rate (B−A)",
+                        f"{unc.delta_rate:+.1%}",
+                    )
+                else:
+                    c3.metric("Δ uncertain rate", "N/A")
+            else:
+                st.info("Decision column not available in one or both runs.")
+
+            # Margin
+            st.subheader("Margin")
+            m = result.margin
+            if m and m.mean_a is not None:
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Mean margin (A)", f"{m.mean_a:.4f}")
+                c2.metric("Mean margin (B)", f"{m.mean_b:.4f}")
+                if m.delta is not None:
+                    c3.metric("Δ mean margin (B−A)", f"{m.delta:+.4f}")
+                else:
+                    c3.metric("Δ mean margin", "N/A")
+                st.caption("Margin is an ambiguity heuristic, not calibrated confidence.")
+            else:
+                st.info("Margin column not available in one or both runs.")
