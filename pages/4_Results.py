@@ -13,7 +13,9 @@ from ui_lib.display import (
     detect_phase3_availability,
     list_output_runs,
     phase3_missing_warning,
+    preview_dataframe,
     render_gap_summary,
+    render_record_reveal,
     show_file_if_exists,
 )
 
@@ -32,9 +34,102 @@ st.caption(
     "⚠️ Research use only — labels are similarity heuristics, not diagnoses."
 )
 
-tab_single, tab_compare, tab_longitudinal = st.tabs(
-    ["Single runs", "Comparisons", "Run comparison (longitudinal)"]
+tab_single, tab_compare, tab_longitudinal, tab_retention = st.tabs(
+    [
+        "Single runs",
+        "Comparisons",
+        "Run comparison (longitudinal)",
+        "Retention & cleanup",
+    ]
 )
+
+with tab_retention:
+    # Issue #10 — explicit, whitelist-based run-output cleanup.
+    # Audit fix (PR #38): the confirmation checkbox and Delete button must
+    # NOT live inside the "Preview deletions" click guard — Streamlit drops
+    # clicks on widgets that vanish on the next rerun, which made the UI
+    # deletion unreachable. Instead: Preview snapshots the selected location
+    # into session state (workflow state only — never conversation text);
+    # the pending plan is REBUILT from that snapshot on every rerun with the
+    # same candidate-selection logic, so a changed file set is displayed as
+    # an updated scope and must be re-confirmed before deletion.
+    from retention import (  # noqa: E402
+        RetentionError,
+        execute_run_cleanup,
+        list_run_locations,
+        plan_run_cleanup,
+    )
+
+    st.caption(
+        "Default policy: temporary generated raw run artifacts are kept "
+        "for **30 days** — a documented default, NOT an enforced "
+        "mechanism. Deletion here is always explicit and manual; original "
+        "datasets, other runs, caches, model weights and gold data are "
+        "never touched."
+    )
+
+    last_result = st.session_state.get("cleanup_last_result")
+    if last_result:
+        st.success(
+            f"Deleted {last_result['deleted']} file(s) "
+            f"(skipped {last_result['skipped']}, failed "
+            f"{last_result['failed']}). Metadata-only audit record "
+            "written to outputs/logs/deletion_audit.jsonl."
+        )
+
+    locations = list_run_locations()
+    if not locations:
+        st.info("No cleanup-eligible artifacts found.")
+    else:
+        location = st.selectbox("Run location", locations)
+        if st.button("Preview deletions"):
+            # snapshot the selected location — the pending review survives
+            # reruns and cannot silently switch to a different location
+            st.session_state["cleanup_pending_location"] = location
+            st.session_state.pop("cleanup_last_result", None)
+
+        pending = st.session_state.get("cleanup_pending_location")
+        if pending:
+            st.markdown(f"**Pending cleanup review for:** `{pending}`")
+            if st.button("Discard pending preview"):
+                st.session_state.pop("cleanup_pending_location", None)
+                st.rerun()
+            plan = None
+            plan_error = None
+            try:
+                plan = plan_run_cleanup(pending)
+            except RetentionError as exc:
+                plan_error = str(exc)
+            if plan_error:
+                # refused — show the reason without killing the other tabs
+                st.error(f"Refused: {plan_error}")
+            elif not plan.candidates:
+                st.info("Nothing to delete (already clean).")
+            else:
+                st.caption(
+                    "The list below reflects the files currently on disk "
+                    "— review it before confirming. Preview → confirm → "
+                    "delete."
+                )
+                for cand in plan.candidates:
+                    st.markdown(
+                        f"- would delete `{cand.display}` "
+                        f"({cand.kind}, {cand.size_bytes} bytes)"
+                    )
+                for display_name, reason in plan.skipped:
+                    st.caption(f"skip: {display_name} — {reason}")
+                confirm = st.checkbox(
+                    "I confirm deletion of exactly the files listed above"
+                )
+                if confirm and st.button(
+                    "Delete listed files", type="primary"
+                ):
+                    result = execute_run_cleanup(plan, confirm=True)
+                    st.session_state["cleanup_last_result"] = result
+                    st.session_state.pop(
+                        "cleanup_pending_location", None
+                    )
+                    st.rerun()
 
 with tab_single:
     runs = list_output_runs(config.OUTPUT_DIR)
@@ -66,11 +161,17 @@ with tab_single:
         if labeled.exists():
             st.subheader("Labeled samples")
             df = pd.read_csv(labeled)
-            # Issue #19: show a visible warning when Phase-3 columns are absent.
             warning = phase3_missing_warning(df)
             if warning:
                 st.warning(warning, icon="⚠️")
-            st.dataframe(df.head(100), use_container_width=True)
+            st.caption(
+                "Conversation previews are truncated by default — a "
+                "privacy affordance, not a security boundary."
+            )
+            st.dataframe(
+                preview_dataframe(df.head(100)), use_container_width=True
+            )
+            render_record_reveal(df.head(100))
             st.download_button(
                 "Download labeled.csv",
                 data=labeled.read_bytes(),

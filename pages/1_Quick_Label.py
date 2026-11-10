@@ -67,6 +67,10 @@ if use_samples:
             f"#{s.idx}: {s.text[:100].replace(chr(10), ' ')}…" for s in samples
         ]
         choice = st.selectbox("Sample", options)
+        st.caption(
+            "The list shows truncated previews; picking a sample "
+            "deliberately loads its full text into the editor below."
+        )
         idx = options.index(choice)
         sample_text = samples[idx].text
         sample_meta = samples[idx].meta

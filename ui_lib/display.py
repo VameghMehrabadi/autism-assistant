@@ -48,6 +48,73 @@ def phase3_missing_warning(df: pd.DataFrame) -> str | None:
     )
 
 
+# Issue #10 — conversation-preview truncation (privacy affordance, NOT a
+# security boundary against screenshots, browser inspection, or authorized
+# users). Previews are truncated by default; revealing one record is an
+# explicit, local action.
+PREVIEW_MAX_CHARS = 120
+PREVIEW_MARKER = " … [+{n} chars — reveal to view]"
+
+
+def preview_text(text: object, max_chars: int = PREVIEW_MAX_CHARS,
+                 reveal: bool = False) -> str:
+    """Truncated single-value preview; full text only on explicit reveal."""
+    value = "" if text is None else str(text)
+    if reveal or len(value) <= max_chars:
+        return value
+    return value[:max_chars].rstrip() + PREVIEW_MARKER.format(
+        n=len(value) - max_chars
+    )
+
+
+def preview_dataframe(
+    df: pd.DataFrame,
+    columns: tuple[str, ...] = ("text",),
+    max_chars: int = PREVIEW_MAX_CHARS,
+) -> pd.DataFrame:
+    """Copy of ``df`` with the given text columns truncated for display.
+
+    The underlying data (and any exported file) is never modified — only
+    what the table shows.
+    """
+    out = df.copy()
+    for col in columns:
+        if col in out.columns:
+            out[col] = out[col].map(
+                lambda v: preview_text(v, max_chars=max_chars)
+            )
+    return out
+
+
+def render_record_reveal(
+    df: pd.DataFrame, text_col: str = "text", key_prefix: str = "reveal"
+) -> None:
+    """Explicit, local per-record reveal of the full conversation text.
+
+    One record at a time, behind an explicit button. The revealed content
+    is rendered straight from the dataframe on each rerun and is never
+    written into session state, so it is not retained by unrelated
+    components.
+    """
+    if df.empty or text_col not in df.columns:
+        return
+    st.caption(
+        "Previews above are truncated by default — a privacy affordance, "
+        "not a security boundary. Reveal one record at a time:"
+    )
+    labels = [
+        f"row {pos} (idx={df.iloc[pos].get('idx', pos)})"
+        for pos in range(len(df))
+    ]
+    choice = st.selectbox(
+        "Record to inspect", options=range(len(labels)),
+        format_func=lambda pos: labels[pos], key=f"{key_prefix}_record",
+    )
+    if st.button("Reveal full text for this record",
+                 key=f"{key_prefix}_button"):
+        st.text(preview_text(df.iloc[choice][text_col], reveal=True))
+
+
 def build_score_table(score_vector: dict[str, float]) -> pd.DataFrame:
     rows = []
     for cat, score in sorted(score_vector.items(), key=lambda x: x[1], reverse=True):

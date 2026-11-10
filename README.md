@@ -185,6 +185,29 @@ docker compose run --rm prefetch                 # همه‌ی مدل‌ها
 docker compose run --rm prefetch --model minilm  # یک مدل
 ```
 
+## نگهداری و حذف مکالمات خام (Issue #10)
+
+خروجی‌های تولیدشده که می‌توانند متن خام مکالمه داشته باشند (CSV لیبل‌شده،
+خروجی ترجمه، فایل QA) در `outputs/<run>/`، `outputs/labeled.csv` (اجرای
+پیش‌فرض) و `data/mentalchat16k_*` / `data/translation_*.jsonl` هستند.
+**سیاست پیش‌فرض نگهداری: ۳۰ روز برای خروجی‌های موقت خام — یک پیش‌فرض
+مستند، نه مکانیزم اجباری؛ حذف همیشه اقدام صریح اپراتور است.**
+
+```bash
+python cleanup_runs.py --list                        # مسیرهای قابل حذف
+python cleanup_runs.py --run <location>              # پیش‌نمایش دقیق
+python cleanup_runs.py --run <location> --confirm    # حذف صریح
+python cleanup_runs.py --run translation-artifacts --confirm
+```
+
+یا در UI: **Results ▸ Retention & cleanup** (پیش‌نمایش → تأیید → حذف).
+حذف مبتنی بر whitelist است: فقط فایل‌های شناخته‌شده‌ی همان اجرا حذف
+می‌شوند؛ sidecar با فایل خودش حذف می‌شود؛ دیتاست‌های اصلی، اجراهای دیگر،
+کش‌ها، وزن مدل‌ها و داده‌ی gold هرگز لمس نمی‌شوند؛ هر حذف تأییدشده یک
+رکورد ممیزی فقط-متادیتا در `outputs/logs/deletion_audit.jsonl` می‌نویسد.
+پیش‌نمایش مکالمات در Results به‌طور پیش‌فرض کوتاه شده و نمایش کامل هر رکورد
+صریح و جداگانه است (امکان حفظ حریم خصوصی، نه مرز امنیتی). فهرست کامل و
+محدودیت‌ها (SSD، بکاپ، اسنپ‌شات): `reports/PRIVACY_AND_SECURITY.md` بخش ۸.
 ## امنیت ذخیره‌سازی / رمزنگاری at-rest (Issue #11)
 
 **معماری: محافظت سطح OS با اظهار اپراتور.** همه‌ی فایل‌های خروجی خط لوله

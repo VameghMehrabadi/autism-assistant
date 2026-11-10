@@ -198,6 +198,32 @@ docker compose run --rm prefetch                 # all registered models
 docker compose run --rm prefetch --model minilm  # one model
 ```
 
+## Raw conversation retention & deletion (Issue #10)
+
+Generated artifacts that can contain raw conversation text (labeled CSVs,
+translation exports, QA review files) live in `outputs/<run>/`,
+`outputs/labeled.csv` (default run) and `data/mentalchat16k_*` /
+`data/translation_*.jsonl`. **Default retention policy: 30 days for
+temporary generated raw run artifacts — a documented default, not an
+enforced mechanism; deletion is always an explicit operator action.**
+
+```bash
+python cleanup_runs.py --list                        # addressable locations
+python cleanup_runs.py --run <location>              # exact preview
+python cleanup_runs.py --run <location> --confirm    # explicit deletion
+python cleanup_runs.py --run translation-artifacts --confirm
+```
+
+Or in the UI: **Results ▸ Retention & cleanup** (preview → confirm
+checkbox → delete). Deletion is whitelist-based: only recognized run
+artifacts of the selected location are removed; export sidecars are
+removed with their export; original datasets, other runs, shared caches,
+model weights, gold data and anything outside `outputs/`/`data/` are never
+touched; every confirmed deletion writes a metadata-only audit record to
+`outputs/logs/deletion_audit.jsonl`. Conversation previews in Results are
+truncated by default with an explicit per-record reveal (a privacy
+affordance, not a security boundary). Full inventory and limitations
+(SSD wear-leveling, backups, snapshots): `reports/PRIVACY_AND_SECURITY.md` §8.
 ## Storage security / encryption at rest (Issue #11)
 
 **Architecture: operator-managed encrypted host storage.** Every file the
