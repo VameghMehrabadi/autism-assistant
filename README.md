@@ -185,6 +185,45 @@ docker compose run --rm prefetch                 # همه‌ی مدل‌ها
 docker compose run --rm prefetch --model minilm  # یک مدل
 ```
 
+## استقرار و دسترسی — محلی vs عمومی (Issue #12)
+
+**پیش‌فرض = فقط localhost.** رابط کاربری روی loopback می‌نشیند
+(`.streamlit/config.toml`) و پورت هاست در Docker روی `127.0.0.1` منتشر
+می‌شود — هیچ ماشین دیگری در شبکه نمی‌تواند آن را باز کند. کانتینر درونی روی
+`0.0.0.0` گوش می‌دهد (برای port forwarding لازم است)؛ تعیین‌کننده‌ی دسترسی،
+آدرس منتشرشده‌ی سمت هاست است نه آدرس درونی کانتینر.
+
+```bash
+# حالت محلی (پیش‌فرض — بدون نیاز به رمز، فقط loopback)
+docker compose up --build            # -> http://127.0.0.1:8501 فقط روی همین ماشین
+# یا بدون Docker:
+python -m streamlit run ui.py
+```
+
+**حالت عمومی صریح است و رمز می‌خواهد.** `BIND_PUBLIC=1` بدون رمز با شکست
+مواجه می‌شود (compose متوقف می‌شود؛ اپ محتوا نمی‌دهد). انتشار عمومی هر سه
+شرط را می‌خواهد:
+
+```bash
+BIND_PUBLIC=1 APP_AUTH_PASSWORD='یک-عبارت-بلند-انتخاب-کنید'   docker compose -f docker-compose.yml -f docker-compose.public.yml up --build
+```
+
+- `APP_AUTH_PASSWORD` (یا `.streamlit/secrets.toml` → `[auth] password`، در
+  حالت عمومی حداقل ۸ نویسه) ورود مشترک اپراتور را باز می‌کند. مقدار رمز هرگز
+  لاگ یا hardcode نمی‌شود و در session ذخیره نمی‌شود.
+- گیت ورود (`ui_lib/auth.py`، مقایسه‌ی constant-time) قبل از هر محتوایی روی
+  صفحه‌ی اصلی و همه‌ی زیرصفحه‌هاست؛ **Logout** آن را پاک می‌کند.
+- **XSRF احراز هویت نیست** — فقط جلوی CSRF را می‌گیرد، نه باز کردن صفحه توسط
+  غریبه‌ها را.
+- **جداسازی چندکاربره نیست**: یک رمز مشترک و یک فضای کاری مشترک —
+  مکالمات، لیبل‌ها، `data/` و `outputs/` بین همه‌ی کاربران همین نمونه مشترک
+  است.
+- **دسترسی از راه دور/بالینی باید TLS داشته باشد**: یک reverse proxy با
+  احراز هویت و TLS (مثلاً Caddy `basic_auth`) جلوی اپ بگذارید و پورت
+  Streamlit روی هاستِ پراکسی فقط loopback بماند. اپ HTTP ساده سرو می‌کند —
+  هرگز روی شبکه‌ی غیرمطمئن خام منتشرش نکنید.
+- توقف انتشار عمومی: دوباره `docker compose up -d` ساده را اجرا کنید (فقط
+  loopback) و فایل override را از دستور حذف کنید.
 **ماندگاری کش.** همه‌ی سرویس‌ها `AUTISM_CACHE_DIR=/cache` دارند و volume نام‌دار
 `model_cache` روی `/cache` سوار است؛ داخل کانتینر مسیر کش وزن‌ها از طریق
 `SENTENCE_TRANSFORMERS_HOME=/cache/hf/sentence-transformers` روی همان volume

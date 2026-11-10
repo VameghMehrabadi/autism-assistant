@@ -2,8 +2,12 @@ services:
   ui:
     build: .
     image: autism-assistant:latest
+    # Issue #12 — host-side binding defaults to loopback ONLY. The container
+    # itself listens on 0.0.0.0 (Dockerfile CMD) so Docker forwarding works;
+    # what matters for exposure is the published host address. To expose
+    # publicly, use docker-compose.public.yml (BIND_PUBLIC=1 + credential).
     ports:
-      - "8501:8501"
+      - "${UI_BIND_HOST:-127.0.0.1}:${UI_HOST_PORT:-8501}:8501"
     environment:
       AUTISM_CACHE_DIR: /cache
       HF_HOME: /cache/hf
@@ -15,6 +19,8 @@ services:
       ZAI_API_KEY: ${ZAI_API_KEY:-}
       ZHIPU_API_KEY: ${ZHIPU_API_KEY:-}
       ZAI_BASE_URL: ${ZAI_BASE_URL:-}
+      APP_AUTH_PASSWORD: ${APP_AUTH_PASSWORD:-}
+      BIND_PUBLIC: ${BIND_PUBLIC:-0}
     volumes:
       - ./data:/app/data
       - ./outputs:/app/outputs

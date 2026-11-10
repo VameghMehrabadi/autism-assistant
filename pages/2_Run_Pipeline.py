@@ -18,6 +18,10 @@ from ui_lib.widgets import (
 )
 
 st.set_page_config(page_title="Run Pipeline", layout="wide")
+
+from ui_lib.auth import require_auth  # noqa: E402  (gate before any content)
+
+require_auth()
 st.title("Run Pipeline")
 st.caption("One model × one fact language × one dataset → labeled CSV + gap report.")
 st.caption(

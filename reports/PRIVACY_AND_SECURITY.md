@@ -89,6 +89,84 @@ files yet — operators must apply their own data-governance rules.
 - Docker image build not exercised in this environment (daemon unavailable);
   compose configuration is YAML-validated.
 
+
+## 8. Network isolation & UI authentication (Issue #12 — reviewed 2026-11-07)
+
+### Deployment boundary — three distinct layers
+
+| Layer | Default | Controlled by |
+|---|---|---|
+| **Container listening address** | `0.0.0.0` (inside the container — required for Docker port forwarding; does NOT expose the host) | Dockerfile CMD (`--server.address=0.0.0.0`) |
+| **Host published address** | `127.0.0.1` only — other machines cannot connect | `docker-compose.yml` → `${UI_BIND_HOST:-127.0.0.1}:${UI_HOST_PORT:-8501}:8501` |
+| **Authentication boundary** | none required (service is loopback-only) | `BIND_PUBLIC` / `APP_AUTH_PASSWORD` via `security_config.py` + `ui_lib/auth.py` |
+
+Local (non-Docker) runs bind to `localhost` via `.streamlit/config.toml`
+(`server.address = "localhost"`) — the UI is not reachable from another
+machine by default. XSRF protection stays enabled and CORS is enabled
+(`server.enableCORS = true`); neither was weakened.
+
+### Public mode — explicit, authenticated, fail-closed
+
+`BIND_PUBLIC=1` is the only switch that requests public exposure, and it
+requires **both** of these to take effect:
+
+```bash
+# Default local mode (localhost only, no credential needed):
+docker compose up --build
+# or locally: .\launch_ui.ps1   /   python -m streamlit run ui.py
+
+# Explicit PUBLIC mode (fails closed without the credential):
+BIND_PUBLIC=1 APP_AUTH_PASSWORD='choose-a-long-passphrase'   docker compose -f docker-compose.yml -f docker-compose.public.yml up --build
+```
+
+- `docker-compose.public.yml` publishes `0.0.0.0:${UI_HOST_PORT:-8501}:8501`
+  (override file, `!override` tag) and sets `BIND_PUBLIC=1`.
+- `APP_AUTH_PASSWORD` is required by compose interpolation
+  (`${APP_AUTH_PASSWORD:?…}`) — `up`/`config` abort without it (verified via
+  `docker compose config`).
+- The application validates independently (`security_config.py`, called by
+  `ui_lib.auth.require_auth()` on every page): public mode without a
+  credential, an invalid `BIND_PUBLIC` value, or a credential shorter than 8
+  characters refuses to serve content (defense in depth for non-Docker
+  launches too).
+- **Stop public exposure:** stop using the override file and re-run plain
+  `docker compose up -d` (or unset `BIND_PUBLIC`); the port is loopback-only
+  again.
+
+### Authentication mechanism (selected)
+
+- **Implemented:** application-level password gate (`ui_lib/auth.py`) —
+  single shared operator credential from `APP_AUTH_PASSWORD` or
+  `.streamlit/secrets.toml` (`[auth] password`), constant-time comparison
+  (`hmac.compare_digest`), session flag only (no password in session
+  state), gate before any content on `ui.py` and all five pages, logout
+  clears state. Streamlit 1.66's native `st.login` was evaluated and
+  rejected: it is OIDC-provider-based and requires an external identity
+  provider plus registered redirect URLs — unsuitable for an offline
+  research prototype.
+- **Not implemented (recommended for production/clinical use):** an
+  authenticated, TLS-terminating reverse proxy (e.g. Caddy with basic_auth
+  or forward_auth) in front of the app, with the Streamlit port kept
+  loopback-only on the proxy host. TLS is REQUIRED for any remote/clinical
+  network access — passwords cross the network unencrypted otherwise, and
+  the app itself serves plain HTTP. A proxy claim is never treated as
+  proof of authentication; client-supplied forwarded-auth headers are not
+  trusted.
+
+### What this is NOT (limitations)
+
+- **XSRF protection is not authentication** — it guards cross-site request
+  forgery, not who opens the page.
+- **No multi-user data isolation**: one shared credential, one shared
+  workspace — conversations, labels, exports, `data/`, `outputs/` are common
+  to all users of the instance. This is not a multi-tenant system; a login
+  screen does not make it suitable for clinical deployment.
+- Browser-level authentication behavior was not exercised here (no browser
+  test in this environment); the gate logic, page coverage and fail-closed
+  paths are unit-tested, and compose validation is configuration-level.
+- Docker runtime verification (image build, real port exposure, remote
+  connection attempt) was not executed — Docker daemon unavailable in this
+  environment; reported as BLOCKED in the Issue #12 PR.
 ## 8. Dataset licensing assessment — MentalChat16K (reviewed 2026-11-07)
 
 **Dataset:** [ShenLab/MentalChat16K](https://huggingface.co/datasets/ShenLab/MentalChat16K)

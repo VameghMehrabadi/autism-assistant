@@ -24,6 +24,10 @@ from ui_lib.widgets import (
 )
 
 st.set_page_config(page_title="Translate / Export", layout="wide")
+
+from ui_lib.auth import require_auth  # noqa: E402  (gate before any content)
+
+require_auth()
 st.title("Translate / Export")
 st.caption(
     "Export English MentalChat16K utterances, then translate with GPT-4+ "

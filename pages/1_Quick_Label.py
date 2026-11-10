@@ -15,6 +15,11 @@ from ui_lib.widgets import (
 )
 
 st.set_page_config(page_title="Quick Label", layout="wide")
+
+from ui_lib.auth import require_auth  # noqa: E402  (gate before any content)
+
+require_auth()
+
 st.title("Quick Label")
 st.caption("Score one utterance against autism fact categories.")
 st.caption(
