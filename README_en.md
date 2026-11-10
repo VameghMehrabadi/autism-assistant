@@ -19,9 +19,16 @@ embedding models for reliability.
 | Z.ai (GLM) provider integration | ✅ implemented + verified (offline + local live path); awaiting credentials |
 | Streamlit GUI | ✅ implemented + verified in a real browser (labeling, results, evidence tables) |
 | Tests | ✅ 174 passing (`pytest`); CI workflow in place |
-| Docker image | ⚠️ Dockerfile/compose ready and pinned; build not exercised (no Docker daemon in the dev environment) |
+| Docker image | ⚠️ **IMPLEMENTED — NOT EXECUTED**: Dockerfile/compose ready and pinned; YAML-validated, but the image build has never completed (see the release checklist) |
 
 Details: `reports/` (phase reports, final report, cost analysis), `DEVELOPMENT_LOG.md`.
+
+**Release status:** the authoritative v1 readiness checklist — including the
+four outstanding blockers (Z.ai-funded translation, comparison runs 4–5,
+Docker build + runtime smoke, human gold-data calibration) — lives in
+[`reports/PHASE_5_RELEASE_READINESS.md`](reports/PHASE_5_RELEASE_READINESS.md)
+§3. The project is **not** ready for a `v1` tag until every item there is
+checked with linked evidence.
 
 
 ## Pipeline
@@ -32,7 +39,7 @@ Details: `reports/` (phase reports, final report, cost analysis), `DEVELOPMENT_L
 4. `gap_analysis.py` — Distribution, score stats, weak/strong categories, chart.
 5. `main.py` — Single-run orchestration.
 6. `compare_runs.py` — Five-way model/language comparison.
-7. `export_for_translation.py` + `translate_dataset.py` + `prompts/semantic_persian_translation.txt` — Export and GPT-4+ Persian translation.
+7. `export_for_translation.py` + `translate_dataset.py` + `prompts/semantic_persian_translation.txt` — Export and LLM Persian translation (provider configurable via `--provider`).
 
 ## Supported embedding models
 
@@ -52,7 +59,7 @@ Details: `reports/` (phase reports, final report, cost analysis), `DEVELOPMENT_L
 | 4 | Persian | Persian | bge-m3 |
 | 5 | Persian | Persian | multilingual-e5-large |
 
-> Runs 1–3 use the original English MentalChat16K; runs 4–5 use the GPT-4+ Persian translation.
+> Runs 1–3 use the original English MentalChat16K; runs 4–5 use the LLM-translated Persian dataset (provider configurable; see translate_dataset.py).
 
 ## Install
 
@@ -73,6 +80,28 @@ python -m pip check             # verifies the dependency graph is consistent
 A CUDA build of `torch==2.15.0` from the default PyPI index is drop-in
 compatible for everything else in the stack. Unit tests run fully offline —
 no model downloads and no API keys are required (`pytest`).
+
+### Quick start with the launch scripts (Windows)
+
+The `launch_ui.bat` and `launch_ui.ps1` scripts automate the full setup:
+venv creation, CPU-only PyTorch installation, dependency installation,
+`pip check`, and Streamlit launch. They skip installation on subsequent
+runs when dependencies are already present.
+
+```bat
+launch_ui.bat        (double-click or run from cmd)
+.\launch_ui.ps1      (PowerShell)
+```
+
+**Model cache location:** embedding models and datasets are cached in
+`config.CACHE_DIR` (default: `D:\autism_assistant_cache` if a `D:` drive
+exists, otherwise `<project>\.cache`). Override with the `AUTISM_CACHE_DIR`
+environment variable. The directory is created automatically on first use.
+
+**Common failures:**
+- `pip check` fails → dependency graph is inconsistent; delete `.venv` and re-run the launcher.
+- PyTorch install fails → verify network access to `download.pytorch.org`.
+- Streamlit not found → the venv exists but dependencies are missing; delete `.venv` and re-run.
 
 Engineering reports live in `reports/` (phase audits, architecture,
 roadmap, dependency verification).
@@ -178,6 +207,53 @@ python -m pytest
 ```
 
 GitHub Actions runs pytest on `push` / `pull_request` to `main`.
+
+## Operational validation (manual — real Z.ai and Docker)
+
+Offline automated tests (248 tests, `pytest`) verify pipeline logic without
+real API calls. Operational validation exercises the **actual** Z.ai
+endpoint and **actual** Docker build — these require manual triggering and
+external services.
+
+### How to trigger
+
+Go to **Actions → Operational Validation → Run workflow** on GitHub.
+Select which validations to run (Z.ai probe, Docker build, or both).
+
+**Prerequisites:**
+- `ZAI_API_KEY` must be configured as a GitHub Actions **repository secret**
+  (Settings → Secrets and variables → Actions). Never commit it to the repo.
+- Docker build requires no additional secrets.
+
+### What each validation does
+
+| Validation | What it does | Requires |
+|---|---|---|
+| Z.ai probe | Sends one benign test sentence to `api.z.ai` to verify authentication, model access, and response protocol | `ZAI_API_KEY` secret |
+| Docker build | Builds the project image using `docker compose build ui` | Docker daemon on the runner |
+| Docker healthcheck | Starts the container and waits for `/_stcore/health` → 200 | Docker build successful |
+
+### Status meanings
+
+| Status | Meaning |
+|---|---|
+| `SUCCESS` | Validation passed with execution evidence |
+| `BLOCKED` | Authenticated/started but an external dependency prevented completion (e.g. code 1113 insufficient balance) |
+| `SKIPPED` | Not requested or credentials not configured |
+| `FAILED` | Attempted but failed (auth, network, build, etc.) |
+
+### Where to find results
+
+- Workflow logs: **Actions → Operational Validation → [run number]**
+- Job summary: displayed at the top of each workflow run
+- Issue #17: the workflow automatically posts a summary comment with the
+  latest results
+
+### What is NOT covered
+
+- Real Persian translation of dataset records (requires manual `translate_dataset.py` execution)
+- Model quality evaluation (requires gold-labeled calibration data)
+- Clinical or diagnostic accuracy (this is a research prototype)
 
 ## Categories (A–G)
 

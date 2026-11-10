@@ -9,7 +9,13 @@ import streamlit as st
 
 import config
 from run_comparison import build_comparison_table, compare_runs, load_run_snapshot
-from ui_lib.display import list_output_runs, render_gap_summary, show_file_if_exists
+from ui_lib.display import (
+    detect_phase3_availability,
+    list_output_runs,
+    phase3_missing_warning,
+    render_gap_summary,
+    show_file_if_exists,
+)
 
 st.set_page_config(page_title="Results", layout="wide")
 st.title("Results")
@@ -52,6 +58,10 @@ with tab_single:
         if labeled.exists():
             st.subheader("Labeled samples")
             df = pd.read_csv(labeled)
+            # Issue #19: show a visible warning when Phase-3 columns are absent.
+            warning = phase3_missing_warning(df)
+            if warning:
+                st.warning(warning, icon="⚠️")
             st.dataframe(df.head(100), use_container_width=True)
             st.download_button(
                 "Download labeled.csv",
