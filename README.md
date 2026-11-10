@@ -177,6 +177,55 @@ python compare_runs.py --limit 5 --dataset-path tests/fixtures/mentalchat16k_fa.
 python -m pytest
 ```
 
+```bash
+python -m pytest
+```
+
+## اعتبارسنجی عملیاتی (دستی — Z.ai واقعی و Docker)
+
+تست‌های آفلاین (۲۴۸ تست، `pytest`) منطق خط لوله را بدون تماس با API واقعی
+بررسی می‌کنند. اعتبارسنجی عملیاتی **endpoint واقعی** Z.ai و **build واقعی**
+Docker را آزمایش می‌کند — این‌ها نیازمند فعال‌سازی دستی و سرویس‌های بیرونی هستند.
+
+### نحوه‌ی فعال‌سازی
+
+در GitHub به **Actions → Operational Validation → Run workflow** بروید.
+اعتبارسنجی مورد نظر (Z.ai probe، Docker build، یا هر دو) را انتخاب کنید.
+
+**پیش‌نیازها:**
+- `ZAI_API_KEY` باید به‌عنوان **repository secret** در GitHub Actions تنظیم
+  شده باشد (Settings → Secrets and variables → Actions). هرگز در ریپو کامیت نکنید.
+- Docker build نیازی به secret اضافه ندارد.
+
+### چه چیزی بررسی می‌شود
+
+| اعتبارسنجی | عملکرد | پیش‌نیاز |
+|---|---|---|
+| Z.ai probe | ارسال یک جمله‌ی ساده به `api.z.ai` برای بررسی auth و دسترسی به مدل | `ZAI_API_KEY` secret |
+| Docker build | ساخت ایمیج پروژه با `docker compose build ui` | Docker daemon |
+| Docker healthcheck | اجرای کانتینر و انتظار برای `/_stcore/health` → 200 | Docker build موفق |
+
+### معنی وضعیت‌ها
+
+| وضعیت | معنی |
+|---|---|
+| `SUCCESS` | اعتبارسنجی با شواهد اجرا موفق بود |
+| `BLOCKED` | احراز هویت/اجرا شروع شد اما وابستگی بیرونی مانع شد (مثلاً code 1113) |
+| `SKIPPED` | درخواست نشد یا credentials تنظیم نشده بود |
+| `FAILED` | اجرا شد اما ناموفق بود (auth، network، build و غیره) |
+
+### یافتن نتایج
+
+- لاگ workflow: **Actions → Operational Validation → [شماره اجرا]**
+- خلاصه‌ی job: بالای هر اجرای workflow نمایش داده می‌شود
+- Issue #17: workflow به‌صورت خودکار خلاصه‌ای از آخرین نتایج را در Issue #17 ثبت می‌کند
+
+### چه چیزی پوشش داده نمی‌شود
+
+- ترجمه‌ی واقعی رکوردهای دیتاست (نیازمند اجرای دستی `translate_dataset.py`)
+- ارزیابی کیفیت مدل (نیازمند داده‌ی gold برچسب‌خورده)
+- دقت بالینی (این یک پروتوتایپ پژوهشی است)
+
 ## Categories / دسته‌ها (A–G)
 
 | Key | Title                         | #facts |

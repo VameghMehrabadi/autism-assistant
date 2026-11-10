@@ -208,6 +208,53 @@ python -m pytest
 
 GitHub Actions runs pytest on `push` / `pull_request` to `main`.
 
+## Operational validation (manual — real Z.ai and Docker)
+
+Offline automated tests (248 tests, `pytest`) verify pipeline logic without
+real API calls. Operational validation exercises the **actual** Z.ai
+endpoint and **actual** Docker build — these require manual triggering and
+external services.
+
+### How to trigger
+
+Go to **Actions → Operational Validation → Run workflow** on GitHub.
+Select which validations to run (Z.ai probe, Docker build, or both).
+
+**Prerequisites:**
+- `ZAI_API_KEY` must be configured as a GitHub Actions **repository secret**
+  (Settings → Secrets and variables → Actions). Never commit it to the repo.
+- Docker build requires no additional secrets.
+
+### What each validation does
+
+| Validation | What it does | Requires |
+|---|---|---|
+| Z.ai probe | Sends one benign test sentence to `api.z.ai` to verify authentication, model access, and response protocol | `ZAI_API_KEY` secret |
+| Docker build | Builds the project image using `docker compose build ui` | Docker daemon on the runner |
+| Docker healthcheck | Starts the container and waits for `/_stcore/health` → 200 | Docker build successful |
+
+### Status meanings
+
+| Status | Meaning |
+|---|---|
+| `SUCCESS` | Validation passed with execution evidence |
+| `BLOCKED` | Authenticated/started but an external dependency prevented completion (e.g. code 1113 insufficient balance) |
+| `SKIPPED` | Not requested or credentials not configured |
+| `FAILED` | Attempted but failed (auth, network, build, etc.) |
+
+### Where to find results
+
+- Workflow logs: **Actions → Operational Validation → [run number]**
+- Job summary: displayed at the top of each workflow run
+- Issue #17: the workflow automatically posts a summary comment with the
+  latest results
+
+### What is NOT covered
+
+- Real Persian translation of dataset records (requires manual `translate_dataset.py` execution)
+- Model quality evaluation (requires gold-labeled calibration data)
+- Clinical or diagnostic accuracy (this is a research prototype)
+
 ## Categories (A–G)
 
 | Key | Title | #facts |
