@@ -1209,6 +1209,12 @@ def run_probe(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    from storage_security import storage_security_exit_code
+
+    rc = storage_security_exit_code()
+    if rc:
+        return rc
+
     args = parse_args(argv)
     if args.probe:
         return run_probe(args)

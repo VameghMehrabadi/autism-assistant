@@ -151,3 +151,36 @@ def render_category_legend() -> None:
 def persian_dataset_ready(path: str | Path | None = None) -> bool:
     p = Path(path) if path else config.PERSIAN_DATASET_PATH
     return p.exists()
+
+
+def render_storage_security_banner(compact: bool = False) -> None:
+    """Issue #11 — show the effective storage-security mode in the UI.
+
+    Full banner on the Home page, compact caption on sub-pages. Fails
+    closed: an invalid storage-security configuration shows an error and
+    stops the page instead of rendering content. Never displays secrets
+    (none exist — protection is operator-declared OS-level encryption).
+    """
+    import streamlit as st
+
+    from storage_security import (
+        MODE_PATIENT_DATA,
+        StorageSecurityError,
+        security_summary,
+        validate_storage_security,
+        warning_message,
+    )
+
+    try:
+        security = validate_storage_security()
+    except StorageSecurityError as exc:
+        st.error(f"**Storage security configuration invalid** — {exc}")
+        st.stop()
+        return
+    if compact:
+        st.caption(security_summary(security))
+        return
+    if security.mode == MODE_PATIENT_DATA:
+        st.info(warning_message(security))
+    else:
+        st.warning(warning_message(security))

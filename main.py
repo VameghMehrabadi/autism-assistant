@@ -250,6 +250,12 @@ def run_pipeline(
 
 
 def main() -> int:
+    from storage_security import storage_security_exit_code
+
+    rc = storage_security_exit_code()
+    if rc:
+        return rc
+
     args = parse_args()
     try:
         run_pipeline(

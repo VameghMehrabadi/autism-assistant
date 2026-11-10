@@ -19,6 +19,8 @@ services:
       ZAI_API_KEY: ${ZAI_API_KEY:-}
       ZHIPU_API_KEY: ${ZHIPU_API_KEY:-}
       ZAI_BASE_URL: ${ZAI_BASE_URL:-}
+      DATA_STORAGE_MODE: ${DATA_STORAGE_MODE:-}
+      STORAGE_PROTECTION_DECLARATION: ${STORAGE_PROTECTION_DECLARATION:-}
       APP_AUTH_PASSWORD: ${APP_AUTH_PASSWORD:-}
       BIND_PUBLIC: ${BIND_PUBLIC:-0}
     volumes:
@@ -44,6 +46,8 @@ services:
       ZAI_API_KEY: ${ZAI_API_KEY:-}
       ZHIPU_API_KEY: ${ZHIPU_API_KEY:-}
       ZAI_BASE_URL: ${ZAI_BASE_URL:-}
+      DATA_STORAGE_MODE: ${DATA_STORAGE_MODE:-}
+      STORAGE_PROTECTION_DECLARATION: ${STORAGE_PROTECTION_DECLARATION:-}
     volumes:
       - ./data:/app/data
       - ./outputs:/app/outputs

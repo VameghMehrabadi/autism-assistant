@@ -43,12 +43,12 @@ def main() -> None:
         initial_sidebar_state="expanded",
     )
 
-    # Issue #12 — deployment-security gate: must run before ANY content is
-    # rendered. Anonymous on localhost; login required when a credential is
-    # configured or BIND_PUBLIC=1 (fail-closed validation inside).
+    # Deployment gate runs before any content. Storage mode banner follows.
     from ui_lib.auth import require_auth
+    from ui_lib.widgets import render_storage_security_banner
 
     require_auth()
+    render_storage_security_banner()
 
     st.title("Autism Assistant")
     st.caption(

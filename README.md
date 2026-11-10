@@ -185,6 +185,39 @@ docker compose run --rm prefetch                 # همه‌ی مدل‌ها
 docker compose run --rm prefetch --model minilm  # یک مدل
 ```
 
+## امنیت ذخیره‌سازی / رمزنگاری at-rest (Issue #11)
+
+**معماری: محافظت سطح OS با اظهار اپراتور.** همه‌ی فایل‌های خروجی خط لوله
+(دیتاست‌ها، لیبل‌ها، خروجی ترجمه، فایل‌های QA، گزارش‌ها، نمودارها، لاگ‌ها،
+کش‌ها و فایل‌های موقت/پشتیبان) زیر `data/`، `outputs/` یا ریشه‌ی کش نوشته
+می‌شوند — پس رمزنگاری حجم (BitLocker / LUKS / FileVault) همه را پوشش می‌دهد.
+اپلیکیشن عمداً **هیچ کد رمزنگاری ندارد**؛ نمی‌تواند وضعیت رمز دیسک را
+تشخیص دهد و هرگز ادعای تشخیص نمی‌کند.
+
+```bash
+# حالت research (پیش‌فرض — روال فعلی با هشدار صریح):
+python main.py --limit 50
+# حالت patient-data (بدون اظهار، fail closed):
+DATA_STORAGE_MODE=patient-data STORAGE_PROTECTION_DECLARATION=bitlocker python main.py --limit 50
+```
+
+| حالت | رفتار |
+|------|-------|
+| `research` (پیش‌فرض) | فایل‌ها مگر با محافظت حجم توسط اپراتور، **رمزنشده** نوشته می‌شوند؛ بنر UI و خط CLI هشدار می‌دهند؛ برای PHI مناسب نیست مگر محافظت معادل جداگانه مستند شود |
+| `patient-data` | نیازمند `STORAGE_PROTECTION_DECLARATION` (`bitlocker` \| `luks` \| `filevault` \| `encrypted-volume`) — **اظهار اپراتور است، نه ویژگی تأییدشده توسط اپ**؛ پیکربندی نامعتبر/ناقص fail closed می‌شود (کد خروج ۲ / UI محتوا نمی‌دهد) |
+
+- مسیرهای محافظت‌شونده (حجم پشت آن‌ها رمز شود): `data/`، `outputs/`
+  (شامل `outputs/logs`)، ریشه‌ی کش (`AUTISM_CACHE_DIR`) و هر مسیر کش HF
+  (`HF_HOME`/`HF_HUB_CACHE` یا `~/.cache/huggingface`).
+- Docker: bind mountها از فایل‌سیستم هاست پیروی می‌کنند؛ **named volumeها
+  توسط Docker رمز نمی‌شوند** (زیر ریشه‌ی daemon هستند، مثلاً
+  `/var/lib/docker/volumes`) — فایل‌سیستم هاستِ آن‌ها را رمز کنید. کش وزن
+  مدل، محافظت داده‌ی بیمار نیست.
+- تأیید وضعیت رمز کارِ اپراتور است: `manage-bde -status <drive>:`
+  (ویندوز)، `cryptsetup status` (لینوکس)، `fdesetup status` (مک).
+- فایل‌های موجود هرگز خودکار migrate نمی‌شوند؛ رمزِ حجم را فعال کنید یا
+  نسخه‌ها را دستی منتقل کنید. مستثنا شدن از Git (`.gitignore`) رمزنگاری
+  نیست. هیچ ادعای HIPAA/آمادگی بالینی نمی‌شود.
 ## استقرار و دسترسی — محلی vs عمومی (Issue #12)
 
 **پیش‌فرض = فقط localhost.** رابط کاربری روی loopback می‌نشیند
