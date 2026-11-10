@@ -29,6 +29,10 @@ import pandas as pd
 
 import config
 from facts import CATEGORY_KEYS
+from gap_analysis import (
+    CONFIDENCE_NOT_ACCURACY_EN,
+    CONFIDENCE_NOT_ACCURACY_FA,
+)
 from main import run_pipeline
 
 
@@ -197,7 +201,11 @@ def build_comparison_table(summaries: list[dict]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def render_comparison_markdown(summaries: list[dict], table: pd.DataFrame) -> str:
+def render_comparison_markdown(
+    summaries: list[dict],
+    table: pd.DataFrame,
+    score_distributions_available: bool | None = None,
+) -> str:
     completed = [s for s in summaries if s.get("status") != "BLOCKED"]
     blocked = [s for s in summaries if s.get("status") == "BLOCKED"]
     lines = [
@@ -227,6 +235,69 @@ def render_comparison_markdown(summaries: list[dict], table: pd.DataFrame) -> st
             f"| {i} | `{s['id']}` | {s['fact_lang']} | {s['dataset']} | "
             f"{s['model_key']} | {s['confident_rate']:.1%} | {s['mean_top_score']} | "
             f"{' → '.join(s['ranking_weak_to_strong'])} |"
+        )
+
+    # Issue #15 — the fixed interpretation sentence sits directly next to the
+    # Confident% column, plus an explicit no-best-model rule.
+    lines += [
+        "",
+        f"> ⚠️ **{CONFIDENCE_NOT_ACCURACY_FA}**",
+        f"> {CONFIDENCE_NOT_ACCURACY_EN}",
+        ">",
+        "> No run is ranked, colored, or declared the winner on these "
+        "percentages — they are cosine-threshold pass rates, not accuracy.",
+        "",
+        "## Raw score distribution per encoder (uncalibrated)",
+        "",
+        "Cosine score scales are model-dependent (e.g. e5-large concentrates "
+        "scores near 0.80), so the shared 0.35 threshold passes a different "
+        "share of scores for each encoder. The Confident% column above is "
+        "exactly this share — nothing more. Distributions below make the "
+        "saturation visible until human calibration exists.",
+        "",
+        "| Run | n | mean | median | p05 | p95 | share ≥ threshold |",
+        "|-----|---|------|--------|-----|-----|-------------------|",
+    ]
+    for s in summaries:
+        stats = s.get("top_score_stats")
+        if stats:
+            # legacy reports lack p05/p95 — honest dashes, never backfilled
+            p05 = stats.get("p05", "—")
+            p95 = stats.get("p95", "—")
+            lines.append(
+                f"| `{s['id']}` | {s['n_samples']} | {stats['mean']} | "
+                f"{stats['median']} | {p05} | {p95} | "
+                f"{s['confident_rate']:.1%} |"
+            )
+        else:
+            # legacy report without score-scale statistics — honest dashes
+            lines.append(
+                f"| `{s['id']}` | {s['n_samples']} | — | — | — | — | "
+                f"{s['confident_rate']:.1%} |"
+            )
+    for s in summaries:
+        stats = s.get("top_score_stats")
+        if not stats:
+            continue
+        p05 = stats.get("p05")
+        threshold = s.get("threshold") or config.LABEL_THRESHOLD
+        if p05 is not None and p05 >= threshold:
+            lines.append(
+                f"- `{s['id']}`: **threshold saturation** — p05 = {p05} ≥ "
+                f"threshold {s['threshold']}, i.e. at least 95% of raw scores "
+                "clear the shared threshold: it barely discriminates for this "
+                "encoder. The high confident rate reflects score scale, "
+                "**not** a better model."
+            )
+    lines.append("")
+    lines.append(
+        "- Histogram of raw top-score distributions per encoder (shared bins, "
+        "shared x-axis, threshold line): see `score_distributions.png`."
+    )
+    if score_distributions_available is False:
+        lines.append(
+            "- (Histogram not regenerated: raw `top_score` values were not "
+            "available for these runs — no existing file was fabricated.)"
         )
 
     # Issue #8 — gold calibration & human evaluation status: per encoder,
@@ -354,6 +425,120 @@ def plot_comparison(summaries: list[dict], out_path: Path) -> None:
     fig.savefig(out_path, dpi=130)
     plt.close(fig)
     print(f"[compare] Chart saved -> {out_path}")
+
+
+# Fixed bins and x-range shared by every encoder panel (Issue #15): identical
+# bin edges and identical axes are what make the distributions comparable.
+SCORE_HIST_BINS = np.linspace(-0.1, 1.0, 45)
+SCORE_HIST_XLIM = (-0.1, 1.0)
+
+
+def load_run_top_scores(
+    run_id: str, runs_dir: Path | None = None
+) -> pd.Series | None:
+    """Raw `top_score` cosine values from a run's labeled.csv.
+
+    Returns None when the file or the column is missing or empty — absence is
+    reported, never backfilled or fabricated.
+    """
+    path = (runs_dir or config.COMPARISON_DIR) / run_id / "labeled.csv"
+    if not path.exists():
+        return None
+    df = pd.read_csv(path)
+    if "top_score" not in df.columns:
+        return None
+    scores = pd.to_numeric(df["top_score"], errors="coerce").dropna()
+    return scores if len(scores) else None
+
+
+def plot_score_distributions(
+    summaries: list[dict],
+    out_path: Path,
+    runs_dir: Path | None = None,
+    threshold: float | None = None,
+) -> bool:
+    """Per-encoder histograms of raw top-1 cosine scores on shared axes.
+
+    One panel per run, identical bins and identical x-range for every model,
+    with the decision threshold drawn as a dashed line — the visual check for
+    threshold saturation (e.g. e5-large concentrated near 0.80).
+
+    Returns True when the figure was written; False when no run had raw
+    scores available (nothing is fabricated).
+    """
+    if not summaries:
+        return False
+    threshold = config.LABEL_THRESHOLD if threshold is None else threshold
+    series: list[tuple[dict, pd.Series]] = []
+    for s in summaries:
+        scores = load_run_top_scores(s["id"], runs_dir=runs_dir)
+        if scores is not None:
+            series.append((s, scores))
+    if not series:
+        print("[compare] No raw top_score files found — histogram skipped")
+        return False
+
+    fig, axes = plt.subplots(
+        len(series), 1, figsize=(10, 2.9 * len(series)), sharex=True,
+        squeeze=False,
+    )
+    for ax, (s, scores) in zip(axes[:, 0], series):
+        share_above = float((scores >= threshold).mean())
+        ax.hist(scores, bins=SCORE_HIST_BINS, color="#4C72B0", alpha=0.85)
+        ax.axvline(
+            threshold, color="crimson", linestyle="--", linewidth=1.4,
+            label=f"threshold {threshold}",
+        )
+        ax.set_xlim(*SCORE_HIST_XLIM)
+        ax.set_ylabel("Samples")
+        ax.set_title(
+            f"{s['id']} ({s['model_key']}) — n={len(scores)}, "
+            f"share ≥ threshold = {share_above:.1%} (threshold pass rate, "
+            f"not accuracy)",
+            fontsize=10,
+        )
+        ax.legend(fontsize=8, loc="upper left")
+    axes[-1, 0].set_xlabel("Raw cosine similarity (top-1)")
+    fig.suptitle(
+        "Raw score distribution per encoder — shared bins & axes "
+        "(uncalibrated; not comparable as accuracy)",
+        fontsize=11,
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    fig.savefig(out_path, dpi=130)
+    plt.close(fig)
+    print(f"[compare] Score distribution histogram saved -> {out_path}")
+    return True
+
+
+def augment_score_stats(
+    summaries: list[dict], runs_dir: Path | None = None
+) -> list[dict]:
+    """Fill missing ``top_score_stats`` from a run's persisted raw scores.
+
+    Legacy ``gap_analysis.json`` files predate score-scale statistics; the raw
+    ``top_score`` column of ``labeled.csv`` is the persisted ground truth, so
+    the stats are derived from it (and marked as derived) instead of showing
+    dashes. Nothing is invented: runs without any raw scores keep ``None``.
+    """
+    for s in summaries:
+        if s.get("top_score_stats"):
+            continue
+        scores = load_run_top_scores(s["id"], runs_dir=runs_dir)
+        if scores is None:
+            continue
+        s["top_score_stats"] = {
+            "mean": round(float(scores.mean()), 4),
+            "median": round(float(scores.median()), 4),
+            "p05": round(float(scores.quantile(0.05)), 4),
+            "p25": round(float(scores.quantile(0.25)), 4),
+            "p75": round(float(scores.quantile(0.75)), 4),
+            "p95": round(float(scores.quantile(0.95)), 4),
+            "min": round(float(scores.min()), 4),
+            "max": round(float(scores.max()), 4),
+            "source": "derived from labeled.csv top_score (legacy report)",
+        }
+    return summaries
 
 
 def verify_alignment(run_ids: list[str] | None = None) -> dict:
@@ -498,19 +683,26 @@ def main() -> int:
                 },
             )
         summaries.append(summarize_run(report, run_cfg))
+    augment_score_stats(summaries)
 
     table = build_comparison_table(summaries)
     csv_path = config.COMPARISON_DIR / "comparison_summary.csv"
     json_path = config.COMPARISON_DIR / "comparison_summary.json"
     md_path = config.COMPARISON_DIR / "comparison_report.md"
     chart_path = config.COMPARISON_DIR / "comparison_shares.png"
+    dist_path = config.COMPARISON_DIR / "score_distributions.png"
 
     table.to_csv(csv_path, index=False, encoding="utf-8-sig")
     json_path.write_text(
         json.dumps(summaries, ensure_ascii=False, indent=2), encoding="utf-8"
     )
+    # Histogram first: the markdown references whether it was actually built.
+    dist_available = plot_score_distributions(summaries, dist_path)
     md_path.write_text(
-        render_comparison_markdown(summaries, table), encoding="utf-8"
+        render_comparison_markdown(
+            summaries, table, score_distributions_available=dist_available
+        ),
+        encoding="utf-8",
     )
     plot_comparison(summaries, chart_path)
 
@@ -520,6 +712,8 @@ def main() -> int:
     print(f"Report: {md_path}")
     print(f"Table:  {csv_path}")
     print(f"Chart:  {chart_path}")
+    if dist_available:
+        print(f"Histogram: {dist_path}")
     blocked = [s for s in summaries if s.get("status") == "BLOCKED"]
     if blocked:
         print(f"[compare] WARNING: {len(blocked)} run(s) BLOCKED — see the report.")
